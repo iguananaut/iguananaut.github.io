@@ -11,6 +11,17 @@
         margin: auto;
         text-align: center;
       }
+
+      footer p {
+        margin-top: 1em;
+        line-height: 26px;
+      }
+
+      footer p * {
+        display: inline-block !important;
+        vertical-align: middle !important;
+      }
+
     </style>
   </head>
   <body>
@@ -18,5 +29,27 @@
       <span>Check back here later for some manner of static blog/vanity site.</span><br />
       <img alt="under construction" src="img/underc1.png" /><br />
       <small>(Yup, I added an under construction gif. I went there.)</small>
+    </div>
+    <footer>
+      <p>
+        <span>Social media!&nbsp;</span>
+        <span class="g-plusone" data-href="http://iguananaut.net"></span>
+        <a href="https://twitter.com/Iguananaut" class="twitter-follow-button" data-show-count="false" data-size="large">Follow @Iguananaut</a>
+      </p>
+    </footer>
+
+    <!-- Google+ button -->
+    <script type="text/javascript">
+      (function() {
+        var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+        po.src = 'https://apis.google.com/js/plusone.js';
+        var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+      })();
+    </script>
+
+    <!-- Twitter button -->
+    <script type="text/javascript">
+      !function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0],p=/^http:/.test(d.location)?'http':'https';if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src=p+'://platform.twitter.com/widgets.js';fjs.parentNode.insertBefore(js,fjs);}}(document, 'script', 'twitter-wjs');
+    </script>
   </body>
 </html>
