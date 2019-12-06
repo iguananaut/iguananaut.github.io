@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+            <meta charset="utf-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+
+
+        <title>Analyzing Git Repositories in Pandas</title>
+
+        <!-- Bootstrap Core CSS -->
+        <link href="https://iguananaut.net/theme/css/bootstrap.min.css" rel="stylesheet">
+
+        <!-- Custom CSS -->
+        <link href="https://iguananaut.net/theme/css/clean-blog.min.css" rel="stylesheet">
+
+        <!-- Code highlight color scheme -->
+            <link href="https://iguananaut.net/theme/css/code_blocks/darkly.css" rel="stylesheet">
+
+            <!-- CSS specified by the user -->
+            <link href="https://iguananaut.net/static/css/iguananaut.css" rel="stylesheet">
+
+        <!-- Custom Fonts -->
+        <link href="https://maxcdn.bootstrapcdn.com/font-awesome/4.5.0/css/font-awesome.min.css" rel="stylesheet" type="text/css">
+        <link href='https://fonts.googleapis.com/css?family=Lora:400,700,400italic,700italic' rel='stylesheet' type='text/css'>
+        <link href='https://fonts.googleapis.com/css?family=Open+Sans:300italic,400italic,600italic,700italic,800italic,400,300,600,700,800' rel='stylesheet' type='text/css'>
+
+        <!-- HTML5 Shim and Respond.js IE8 support of HTML5 elements and media queries -->
+        <!-- WARNING: Respond.js doesn't work if you view the page via file:// -->
+        <!--[if lt IE 9]>
+            <script src="https://oss.maxcdn.com/libs/html5shiv/3.7.0/html5shiv.js"></script>
+            <script src="https://oss.maxcdn.com/libs/respond.js/1.4.2/respond.min.js"></script>
+        <![endif]-->
+
+
+
+        <meta name="description" content="Although the git log command is extremely powerful for use in exploring a git repository's history, I found it easier to for some kinds ...">
+
+        <meta name="author" content="Erik M. Bray">
+
+        <meta name="tags" content="git">
+        <meta name="tags" content="pandas">
+        <meta name="tags" content="python">
+
+	                <meta property="og:locale" content="">
+		<meta property="og:site_name" content="from iguananaut import braindump">
+
+	<meta property="og:type" content="article">
+            <meta property="article:author" content="https://iguananaut.net/author/erik-m-bray.html">
+	<meta property="og:url" content="https://iguananaut.net/blog/programming/git-logs-in-pandas.html">
+	<meta property="og:title" content="Analyzing Git Repositories in Pandas">
+	<meta property="article:published_time" content="2014-01-03 00:00:00+01:00">
+            <meta property="og:description" content="Although the git log command is extremely powerful for use in exploring a git repository's history, I found it easier to for some kinds ...">
+
+            <meta property="og:image" content="https://iguananaut.net/theme/images/post-bg.jpg">
+        <meta name="twitter:card" content="summary_large_image">
+        <meta name="twitter:site" content="@iguananaut">
+        <meta name="twitter:title" content="Analyzing Git Repositories in Pandas">
+
+            <meta name="twitter:image" content="https://iguananaut.net/theme/images/post-bg.jpg">
+
+            <meta name="twitter:description" content="Although the git log command is extremely powerful for use in exploring a git repository's history, I found it easier to for some kinds ...">
+</head>
+
+<body>
+
+    <!-- Navigation -->
+    <nav class="navbar navbar-default navbar-custom navbar-fixed-top">
+        <div class="container-fluid">
+            <!-- Brand and toggle get grouped for better mobile display -->
+            <div class="navbar-header page-scroll">
+                <button type="button" class="navbar-toggle" data-toggle="collapse" data-target="#bs-example-navbar-collapse-1">
+                    <span class="sr-only">Toggle navigation</span>
+                    <span class="icon-bar"></span>
+                    <span class="icon-bar"></span>
+                    <span class="icon-bar"></span>
+                </button>
+                <a class="navbar-brand" href="https://iguananaut.net/">from iguananaut import braindump</a>
+            </div>
+
+            <!-- Collect the nav links, forms, and other content for toggling -->
+            <div class="collapse navbar-collapse" id="bs-example-navbar-collapse-1">
+                <ul class="nav navbar-nav navbar-right">
+
+                            <li><a href="https://iguananaut.net/pages/about.html">About Me</a></li>
+                </ul>
+            </div>
+            <!-- /.navbar-collapse -->
+        </div>
+        <!-- /.container -->
+    </nav>
+
+    <!-- Page Header -->
+        <header class="intro-header" style="background-image: url('https://iguananaut.net/theme/images/post-bg.jpg')">
+        <div class="container">
+            <div class="row">
+                <div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1">
+                    <div class="post-heading">
+                        <h1>Analyzing Git Repositories in Pandas</h1>
+                        <span class="meta">Posted by
+                                <a href="https://iguananaut.net/author/erik-m-bray.html">Erik M. Bray</a>
+                             on Fri 03 January 2014
+                        </span>
+                        
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1">
+    <!-- Post Content -->
+    <article>
+        <p>Although the git log command is extremely powerful for use in exploring a git
+repository's history, I found that for some kinds of analysis it may be easier
+to dump git log output into a Pandas DataFrame and work with it in Python.</p>
+<p>In particular what motivated this was that I was trying to recreate the graph
+of commit activity over time that GitHub shows on its &quot;Contributors&quot; graph
+page.  For a large project <a class="reference external" href="https://github.com/astropy/astropy/graphs/contributors">like Astropy</a> that looks something
+like this:</p>
+<img alt="Astropy commit activity over time" class="align-center" src="https://iguananaut.net/static/images/git-logs-in-pandas/github-astropy-commits-graph.png" />
+<p>This graph is nice enough on its own for use in a web browser, but I wanted to
+make my own replication of it using matplotlib for my own use.  There do exist
+a number of software packages already that will generate statistics and plots
+from git repositories.  I would link to some, but honestly I didn't bother even
+trying any of them since the plots they made were damned ugly.  I figured I
+only had a few limited use cases I was interested in so it would be easier to
+do myself and probably look a little better.</p>
+<p>My first attempt actually did take advantage of Pandas from the start.  This
+was the first time I had really attempted to do much with Pandas for my own
+use (aside from working on small tutorials to give to other people).  So one
+thing I did know was that I was working with a time series and that Pandas
+might include some tools that would make my life easier.  That said I am still
+learning Pandas myself, and some of my solutions may be ugly and hacky.</p>
+<p>I assumed, to start with, that I would sample the commit activity on a weekly
+basis rather than daily.  <tt class="docutils literal">git log</tt> supports <tt class="docutils literal"><span class="pre">--since</span></tt> and <tt class="docutils literal"><span class="pre">--until</span></tt>
+arguments that allow returning a sample of the log in a specific date range.
+But I needed a quick, easy way to generate a list of dates separated by one
+week.  I could have done this easily enough in pure Python using timedeltas,
+but since I already had Pandas installed my first attempt used its built-in
+<tt class="docutils literal">date_range</tt> function:</p>
+<pre class="code python literal-block">
+<span class="o">&gt;&gt;&gt;</span> <span class="kn">from</span> <span class="nn">pandas</span> <span class="kn">import</span> <span class="n">date_range</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="kn">from</span> <span class="nn">pandas</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">date_range</span><span class="p">(</span><span class="s1">'2011-07-25'</span><span class="p">,</span> <span class="s1">'2014-01-03'</span><span class="p">,</span> <span class="n">freq</span><span class="o">=</span><span class="s1">'W'</span><span class="p">)</span>
+<span class="o">&lt;</span><span class="k">class</span> <span class="err">'</span><span class="nc">pandas</span><span class="o">.</span><span class="n">tseries</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">DatetimeIndex</span><span class="s1">'&gt;</span>
+<span class="p">[</span><span class="mi">2011</span><span class="o">-</span><span class="mo">07</span><span class="o">-</span><span class="mi">31</span> <span class="mo">00</span><span class="p">:</span><span class="mo">00</span><span class="p">:</span><span class="mo">00</span><span class="p">,</span> <span class="o">...</span><span class="p">,</span> <span class="mi">2013</span><span class="o">-</span><span class="mi">12</span><span class="o">-</span><span class="mi">29</span> <span class="mo">00</span><span class="p">:</span><span class="mo">00</span><span class="p">:</span><span class="mo">00</span><span class="p">]</span>
+<span class="n">Length</span><span class="p">:</span> <span class="mi">77</span><span class="p">,</span> <span class="n">Freq</span><span class="p">:</span> <span class="n">W</span><span class="o">-</span><span class="n">SUN</span><span class="p">,</span> <span class="n">Timezone</span><span class="p">:</span> <span class="bp">None</span>
+</pre>
+<p>As you can see, a &quot;gotcha&quot; in Pandas is that the <tt class="docutils literal">'W'</tt> frequency for week
+actually defaults to weeks beginning on Sunday.  A reasonable default, to be
+sure, but this cuts off dates in my range before the first Sunday in the range.
+There are a few possible workarounds for this, but for my case I just shifted
+the start day to the first Sunday before the actual start day.  There is a
+better way I later discovered to do this using the <tt class="docutils literal">period_range</tt> function
+but I will leave that as an exercise.</p>
+<p>My full solution involved looping over the dates in my date range and making
+repeated calls to <tt class="docutils literal">git log</tt>, a process with really more overhead than
+necessary but it was fine for a first attempt:</p>
+<pre class="code python literal-block">
+<span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span>
+<span class="kn">from</span> <span class="nn">pandas</span> <span class="kn">import</span> <span class="n">date_range</span>
+<span class="kn">import</span> <span class="nn">shlex</span>
+<span class="kn">import</span> <span class="nn">subprocess</span> <span class="kn">as</span> <span class="nn">sp</span>
+
+<span class="c1"># I just looked up and hard-coded the start date of the repository in</span>
+<span class="c1"># this version</span>
+<span class="n">start</span> <span class="o">=</span> <span class="n">datetime</span><span class="p">(</span><span class="n">year</span><span class="o">=</span><span class="mi">2011</span><span class="p">,</span> <span class="n">month</span><span class="o">=</span><span class="mi">7</span><span class="p">,</span> <span class="n">day</span><span class="o">=</span><span class="mi">24</span><span class="p">)</span>
+<span class="n">end</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">today</span><span class="p">()</span>
+<span class="n">rng</span> <span class="o">=</span> <span class="n">date_range</span><span class="p">(</span><span class="n">start</span><span class="p">,</span> <span class="n">end</span><span class="p">,</span> <span class="n">freq</span><span class="o">=</span><span class="s1">'W'</span><span class="p">)</span>
+
+<span class="c1"># This will list each commit in the given range on one line each (excluding</span>
+<span class="c1"># merge commits).  This means I can count commits by simply counting lines</span>
+<span class="c1"># of output</span>
+<span class="n">cmd</span> <span class="o">=</span> <span class="s1">'git log --oneline --since=</span><span class="si">%s</span><span class="s1"> --until=</span><span class="si">%s</span><span class="s1"> --no-merges'</span>
+
+<span class="k">def</span> <span class="nf">count_commits</span><span class="p">(</span><span class="n">since</span><span class="p">,</span> <span class="n">until</span><span class="p">):</span>
+    <span class="n">p</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">Popen</span><span class="p">(</span><span class="n">shlex</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="n">cmd</span> <span class="o">%</span> <span class="p">(</span><span class="n">since</span><span class="p">,</span> <span class="n">until</span><span class="p">)),</span> <span class="n">stdout</span><span class="o">=</span><span class="n">sp</span><span class="o">.</span><span class="n">PIPE</span><span class="p">)</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">wait</span><span class="p">()</span>
+    <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">readlines</span><span class="p">())</span>
+
+<span class="n">commits_by_week</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="k">for</span> <span class="n">idx</span> <span class="ow">in</span> <span class="nb">xrange</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">rng</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">):</span>
+    <span class="n">since</span> <span class="o">=</span> <span class="n">rng</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span>
+    <span class="n">since_iso</span> <span class="o">=</span> <span class="n">since</span><span class="o">.</span><span class="n">date</span><span class="p">()</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span>
+    <span class="n">until_iso</span> <span class="o">=</span> <span class="n">rng</span><span class="p">[</span><span class="n">idx</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">date</span><span class="p">()</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span>
+    <span class="n">commits_by_week</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">since</span><span class="p">,</span> <span class="n">count_commits</span><span class="p">(</span><span class="n">since_iso</span><span class="p">,</span> <span class="n">until_iso</span><span class="p">)))</span>
+
+<span class="c1"># Special case for the last week in the range</span>
+<span class="n">since</span> <span class="o">=</span> <span class="n">rng</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+<span class="n">since_iso</span> <span class="o">=</span> <span class="n">since</span><span class="o">.</span><span class="n">date</span><span class="p">()</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span>
+<span class="n">until_iso</span> <span class="o">=</span> <span class="n">end</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span>
+<span class="n">commits_by_week</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">since</span><span class="p">,</span> <span class="n">count_commits</span><span class="p">(</span><span class="n">since_iso</span><span class="p">,</span> <span class="n">until_iso</span><span class="p">)))</span>
+</pre>
+<p>I plopped this script directly into my git repository and ran it.  I've
+ommitted that version of the plotting code, but it came out with something
+like this (after taking a rather long time to make all those <tt class="docutils literal">git log</tt>
+calls):</p>
+<img alt="First attempt at a commit activity graph" class="align-center" src="https://iguananaut.net/static/images/git-logs-in-pandas/first-attempt.png" />
+<p>If you compare that to the version from GitHub you can see that while there
+are similar periods of activity and inactivity, the two plots look rather
+different.  In particular, my version has several large spikes that are
+absent from the GitHub version.  At first I thought I might try sampling by
+day instead of week, but that only made the output even spikier, and all those
+<tt class="docutils literal">git log</tt> calls were taking inordinately long.</p>
+<p>After just a little further exploration of the GitHub graphs and comparison
+with my actual git log I realized the major difference:  GitHub's time series
+is using the &quot;author date&quot; of the commits rather than the &quot;committer date&quot; to
+produce its graph.  All git commits actually carry (at least) two dates.  As
+<a class="reference external" href="http://alexpeattie.com/blog/working-with-dates-in-git/">this article</a> by
+Alex Peattie explains, the &quot;author is the person who originally wrote the work,
+whereas the committer is the person who last applied the work.&quot;  And further,
+<tt class="docutils literal">git log</tt> &quot;uses commit dates when given a <tt class="docutils literal"><span class="pre">--since</span></tt> option.&quot;  So my time
+series was based on commit dates, rather than author dates.  That largely
+explains the big spikes—it turns out they largely correspond to activity just
+before making a release of Astropy, when many pull requests were being merged.
+When the PRs are merged their commits get a commit date same as when they are
+merged.</p>
+<p>In fact, in general, the git log for a large project with many contributors is
+very much <em>not</em> in chronological order of when the commits were first created.
+Rather, because of the way git log works, the commits it lists will generally
+be in topological order.  It starts by looking at your <tt class="docutils literal">HEAD</tt> commit and then
+just walking back through its parents.  This has nothing to do with the actual
+chronological order in which the commits were written by their original
+authors.</p>
+<p>My first attempt at solving this problem was to use a <tt class="docutils literal">git log</tt> command with
+a custom format string returning only the author dates (as well as the hashes
+though they aren't particularly needed):</p>
+<pre class="literal-block">
+git log --no-merges --date=short --pretty='format:%ad %H'
+</pre>
+<p>This displays the author dates fine, but they are still in topological order.
+When trying to use this with <tt class="docutils literal"><span class="pre">--since</span></tt> and <tt class="docutils literal"><span class="pre">--until</span></tt> the returned commits
+are still based in the commit dates and not somehow magically sorted and
+grouped by author date.  I realized at this point that there was no way I
+could rely git log to prepare the data in the way I wanted.  It makes much
+more sense at this point to use Pandas.</p>
+<p>In addition to making the code vastly simpler, it only required one call to
+<tt class="docutils literal">git log</tt> and was much faster.  You can use a custom format with <tt class="docutils literal">git log</tt>
+to produce any and all data you want from git in a tsv or csv format and
+load it directly into a Pandas DataFrame.  For example, in addition to the
+author date, I also wanted the author, and for the heck of it the hash:</p>
+<pre class="code python literal-block">
+<span class="kn">import</span> <span class="nn">io</span>
+<span class="kn">from</span> <span class="nn">pandas</span> <span class="kn">import</span> <span class="n">read_csv</span>
+
+<span class="n">cmd</span> <span class="o">=</span> <span class="s2">&quot;git log --no-merges --date=short --pretty='format:%ad</span><span class="se">\t</span><span class="s2">%H</span><span class="se">\t</span><span class="s2">%aN'&quot;</span>
+<span class="n">p</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">Popen</span><span class="p">(</span><span class="n">shlex</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="n">cmd</span><span class="p">),</span> <span class="n">stdout</span><span class="o">=</span><span class="n">sp</span><span class="o">.</span><span class="n">PIPE</span><span class="p">)</span>
+<span class="c1"># p.wait() will likely just hang if the log is long enough because the</span>
+<span class="c1"># stdout buffer will fill up</span>
+<span class="n">stdout</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">communicate</span><span class="p">()</span>
+
+<span class="n">table</span> <span class="o">=</span> <span class="n">read_csv</span><span class="p">(</span><span class="n">io</span><span class="o">.</span><span class="n">StringIO</span><span class="p">(</span><span class="n">stdout</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="s1">'utf-8'</span><span class="p">)),</span> <span class="n">sep</span><span class="o">=</span><span class="s1">'</span><span class="se">\t</span><span class="s1">'</span><span class="p">,</span>
+                 <span class="n">names</span><span class="o">=</span><span class="p">[</span><span class="s1">'date'</span><span class="p">,</span> <span class="s1">'hash'</span><span class="p">,</span> <span class="s1">'author'</span><span class="p">],</span> <span class="n">index_col</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+                 <span class="n">parse_dates</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span><span class="o">.</span><span class="n">sort</span><span class="p">()</span>
+</pre>
+<p>The <tt class="docutils literal">index_col=0</tt> and <tt class="docutils literal">parse_dates=True</tt> indicate that the first column
+('date') should be treated as the index for the table, and that its values
+should be parsed as dates.  The <tt class="docutils literal">.sort()</tt> call ensures that the returned
+table is sorted in ascending order by date.</p>
+<p>Now the commits are indexed by their author date, and for many applications
+that would be fine.  But I still wanted to try grouping by weekly periods
+for use in my plot instead.  There are probably many ways to do this, but the
+one I settled on was to convert to a DataFrame indexed by periods instead of
+dates:</p>
+<pre class="code python literal-block">
+<span class="n">table</span> <span class="o">=</span> <span class="n">table</span><span class="o">.</span><span class="n">to_period</span><span class="p">(</span><span class="n">freq</span><span class="o">=</span><span class="s1">'W'</span><span class="p">)</span>
+</pre>
+<p>Then it was easy to generate counts of commits in each period using a simple
+combination of <tt class="docutils literal">groupby</tt> and <tt class="docutils literal">aggregate</tt>:</p>
+<pre class="code python literal-block">
+<span class="n">commits_per_period</span> <span class="o">=</span> <span class="n">table</span><span class="o">.</span><span class="n">hash</span><span class="o">.</span><span class="n">groupby</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">aggregate</span><span class="p">(</span><span class="nb">len</span><span class="p">)</span>
+</pre>
+<p>I specically chose to aggregate over the hash column.  I could have just as
+easily used author.  This gives me a table mapping periods to the number of
+commits in each period.  I'm not sure if this next step is necessary, but
+I could convert this to a list of datetimes and associate array of commit
+counts for use with matplotlib:</p>
+<pre class="code python literal-block">
+<span class="n">dates</span> <span class="o">=</span> <span class="p">[</span><span class="n">p</span><span class="o">.</span><span class="n">start_time</span><span class="o">.</span><span class="n">date</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">commits_per_period</span><span class="o">.</span><span class="n">index</span><span class="p">]</span>
+<span class="n">ncommits</span> <span class="o">=</span> <span class="n">commits_per_period</span><span class="o">.</span><span class="n">values</span>
+</pre>
+<p>The result looks like this:</p>
+<img alt="Second attempt at a commit activity graph" class="align-center" src="https://iguananaut.net/static/images/git-logs-in-pandas/second-attempt.png" />
+<p>It still has a few sharper spikes and other small differences from the GitHub
+version, but I think is close enough now.  There could be small differences in
+how they're sampling the data, and additional smoothing that I'm not doing.
+It doesn't matter—this is still an accurate representation of the <em>actual</em>
+activity of developers working on the project.</p>
+<p>This is of course just scratching the surface.  With git commit histories
+loaded into Pandas there's no end to the interesting analysis that could be
+done.  For example, I later went on to add a plot of the number of committers
+to the project over time.  That's still pretty basic though, and as I am not
+a statistician I can only imagine the data one could pull out of a git repo in
+this way.</p>
+<p>The full code, along with the plotting code is here:
+<a class="reference external" href="https://gist.github.com/iguananaut/8248063">https://gist.github.com/iguananaut/8248063</a> with thanks to
+<a class="reference external" href="https://github.com/olgabot">Olga Botvinnik</a> for providing prettier plots
+with <a class="reference external" href="http://olgabot.github.io/prettyplotlib/">prettyplotlib</a>.</p>
+
+    </article>
+
+        <div class="tags">
+            <p>tags: <a href="https://iguananaut.net/tag/git.html">git</a>, <a href="https://iguananaut.net/tag/pandas.html">pandas</a>, <a href="https://iguananaut.net/tag/python.html">python</a></p>
+        </div>
+
+<hr>
+<div class="sharing">
+</div>
+    <hr>
+
+        <div class="comments">
+            <h2>Comments !</h2>
+            <div id="disqus_thread"></div>
+            <script type="text/javascript">
+                var disqus_shortname = 'iguananaut';
+                var disqus_identifier = 'blog/programming/git-logs-in-pandas.html';
+                var disqus_url = 'https://iguananaut.net/blog/programming/git-logs-in-pandas.html';
+                (function() {
+                    var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+                    dsq.src = '//iguananaut.disqus.com/embed.js';
+                    (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+                })();
+            </script>
+            <noscript>Please enable JavaScript to view the comments.</noscript>
+        </div>
+            </div>
+        </div>
+    </div>
+
+    <hr>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="row">
+                <div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1">
+                    <ul class="list-inline text-center">
+                            <li>
+                                <a href="https://twitter.com/iguananaut">
+                                    <span class="fa-stack fa-lg">
+                                        <i class="fa fa-circle fa-stack-2x"></i>
+                                        <i class="fa fa-twitter fa-stack-1x fa-inverse"></i>
+                                    </span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="http://www.linkedin.com/pub/erik-bray/19/2a8/a22">
+                                    <span class="fa-stack fa-lg">
+                                        <i class="fa fa-circle fa-stack-2x"></i>
+                                        <i class="fa fa-linkedin fa-stack-1x fa-inverse"></i>
+                                    </span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="http://stackoverflow.com/users/982257/iguananaut">
+                                    <span class="fa-stack fa-lg">
+                                        <i class="fa fa-circle fa-stack-2x"></i>
+                                        <i class="fa fa-stack-overflow fa-stack-1x fa-inverse"></i>
+                                    </span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="https://github.com/embray">
+                                    <span class="fa-stack fa-lg">
+                                        <i class="fa fa-circle fa-stack-2x"></i>
+                                        <i class="fa fa-github fa-stack-1x fa-inverse"></i>
+                                    </span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="https://bitbucket.com/embray">
+                                    <span class="fa-stack fa-lg">
+                                        <i class="fa fa-circle fa-stack-2x"></i>
+                                        <i class="fa fa-bitbucket fa-stack-1x fa-inverse"></i>
+                                    </span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="mailto:erik.m.bray@gmail.com">
+                                    <span class="fa-stack fa-lg">
+                                        <i class="fa fa-circle fa-stack-2x"></i>
+                                        <i class="fa fa-envelope fa-stack-1x fa-inverse"></i>
+                                    </span>
+                                </a>
+                            </li>
+                    </ul>
+<p style="font-size: small"><span xmlns:dct="http://purl.org/dc/terms/" property="dct:title" class="site-name">
+  iguananaut.net
+</span> by
+<a xmlns:cc="http://creativecommons.org/ns#" href="https://iguananaut.net" property="cc:attributionName" rel="cc:attributionURL">
+  Erik M. Bray
+</a> is licensed under a
+<a rel="license" href="http://creativecommons.org/licenses/by-sa/3.0/deed.en_US">
+  Creative Commons Attribution-ShareAlike 3.0 Unported License
+</a></p>                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- jQuery -->
+    <script src="https://iguananaut.net/theme/js/jquery.js"></script>
+
+    <!-- Bootstrap Core JavaScript -->
+    <script src="https://iguananaut.net/theme/js/bootstrap.min.js"></script>
+
+
+    <script type="text/javascript">
+    var _gaq = _gaq || [];
+    _gaq.push(['_setAccount', 'UA-46117138-1']);
+    _gaq.push(['_trackPageview']);
+    (function() {
+        var ga = document.createElement('script'); ga.type = 'text/javascript'; ga.async = true;
+        ga.src = ('https:' == document.location.protocol ? 'https://ssl' : 'http://www') + '.google-analytics.com/ga.js';
+        var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(ga, s);
+    })();
+    </script>
+<script type="text/javascript">
+    var disqus_shortname = 'iguananaut';
+    (function () {
+        var s = document.createElement('script'); s.async = true;
+        s.type = 'text/javascript';
+        s.src = '//' + disqus_shortname + '.disqus.com/count.js';
+        (document.getElementsByTagName('HEAD')[0] || document.getElementsByTagName('BODY')[0]).appendChild(s);
+    }());
+</script>
+</body>
+
+</html>

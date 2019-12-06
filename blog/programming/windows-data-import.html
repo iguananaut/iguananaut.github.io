@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+            <meta charset="utf-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+
+
+        <title>A DLL Data Import Mystery</title>
+
+        <!-- Bootstrap Core CSS -->
+        <link href="https://iguananaut.net/theme/css/bootstrap.min.css" rel="stylesheet">
+
+        <!-- Custom CSS -->
+        <link href="https://iguananaut.net/theme/css/clean-blog.min.css" rel="stylesheet">
+
+        <!-- Code highlight color scheme -->
+            <link href="https://iguananaut.net/theme/css/code_blocks/darkly.css" rel="stylesheet">
+
+            <!-- CSS specified by the user -->
+            <link href="https://iguananaut.net/static/css/iguananaut.css" rel="stylesheet">
+
+        <!-- Custom Fonts -->
+        <link href="https://maxcdn.bootstrapcdn.com/font-awesome/4.5.0/css/font-awesome.min.css" rel="stylesheet" type="text/css">
+        <link href='https://fonts.googleapis.com/css?family=Lora:400,700,400italic,700italic' rel='stylesheet' type='text/css'>
+        <link href='https://fonts.googleapis.com/css?family=Open+Sans:300italic,400italic,600italic,700italic,800italic,400,300,600,700,800' rel='stylesheet' type='text/css'>
+
+        <!-- HTML5 Shim and Respond.js IE8 support of HTML5 elements and media queries -->
+        <!-- WARNING: Respond.js doesn't work if you view the page via file:// -->
+        <!--[if lt IE 9]>
+            <script src="https://oss.maxcdn.com/libs/html5shiv/3.7.0/html5shiv.js"></script>
+            <script src="https://oss.maxcdn.com/libs/respond.js/1.4.2/respond.min.js"></script>
+        <![endif]-->
+
+
+
+        <meta name="description" content="I've been working hard over the years to get CPython better supported on Cygwin. For years, the CPython code base has supported Cygwin ...">
+
+        <meta name="author" content="Erik M. Bray">
+
+        <meta name="tags" content="c">
+        <meta name="tags" content="windows">
+        <meta name="tags" content="dlls">
+        <meta name="tags" content="compilers">
+        <meta name="tags" content="debugging">
+
+	                <meta property="og:locale" content="">
+		<meta property="og:site_name" content="from iguananaut import braindump">
+
+	<meta property="og:type" content="article">
+            <meta property="article:author" content="https://iguananaut.net/author/erik-m-bray.html">
+	<meta property="og:url" content="https://iguananaut.net/blog/programming/windows-data-import.html">
+	<meta property="og:title" content="A DLL Data Import Mystery">
+	<meta property="article:published_time" content="2018-08-03 00:00:00+02:00">
+            <meta property="og:description" content="I've been working hard over the years to get CPython better supported on Cygwin. For years, the CPython code base has supported Cygwin ...">
+
+            <meta property="og:image" content="https://iguananaut.net/theme/images/post-bg.jpg">
+        <meta name="twitter:card" content="summary_large_image">
+        <meta name="twitter:site" content="@iguananaut">
+        <meta name="twitter:title" content="A DLL Data Import Mystery">
+
+            <meta name="twitter:image" content="https://iguananaut.net/theme/images/post-bg.jpg">
+
+            <meta name="twitter:description" content="I've been working hard over the years to get CPython better supported on Cygwin. For years, the CPython code base has supported Cygwin ...">
+</head>
+
+<body>
+
+    <!-- Navigation -->
+    <nav class="navbar navbar-default navbar-custom navbar-fixed-top">
+        <div class="container-fluid">
+            <!-- Brand and toggle get grouped for better mobile display -->
+            <div class="navbar-header page-scroll">
+                <button type="button" class="navbar-toggle" data-toggle="collapse" data-target="#bs-example-navbar-collapse-1">
+                    <span class="sr-only">Toggle navigation</span>
+                    <span class="icon-bar"></span>
+                    <span class="icon-bar"></span>
+                    <span class="icon-bar"></span>
+                </button>
+                <a class="navbar-brand" href="https://iguananaut.net/">from iguananaut import braindump</a>
+            </div>
+
+            <!-- Collect the nav links, forms, and other content for toggling -->
+            <div class="collapse navbar-collapse" id="bs-example-navbar-collapse-1">
+                <ul class="nav navbar-nav navbar-right">
+
+                            <li><a href="https://iguananaut.net/pages/about.html">About Me</a></li>
+                </ul>
+            </div>
+            <!-- /.navbar-collapse -->
+        </div>
+        <!-- /.container -->
+    </nav>
+
+    <!-- Page Header -->
+        <header class="intro-header" style="background-image: url('https://iguananaut.net/theme/images/post-bg.jpg')">
+        <div class="container">
+            <div class="row">
+                <div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1">
+                    <div class="post-heading">
+                        <h1>A DLL Data Import Mystery</h1>
+                        <span class="meta">Posted by
+                                <a href="https://iguananaut.net/author/erik-m-bray.html">Erik M. Bray</a>
+                             on Fri 03 August 2018
+                        </span>
+                        
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1">
+    <!-- Post Content -->
+    <article>
+        <p>I've been working hard over the years to get CPython better supported on
+Cygwin.  For years, the CPython code base has supported Cygwin off-and-on,
+but it has not been &quot;supported&quot; in many years in the sense of having a
+working build bot, or support from any of the CPython core developers.
+That's a whole other story; but this is about just one relatively minor
+compile-time bug I've seen come up <a class="reference external" href="https://bugs.python.org/issue21124">multiple</a> <a class="reference external" href="https://bugs.python.org/issue34211">times</a> in this porting effort.</p>
+<div class="section" id="the-problem">
+<h2>The problem</h2>
+<p>To demonstrate the problem we don't need anything as complex as CPython.
+In short, the problem arises in the case where we have a shared library, and
+some other executable (either a program or another shared lib) that
+references some data in the first library (and <em>specifically</em> data, as
+opposed to functions).  In particular, the problem occurs when referencing
+the external data in the initializer of some static struct, as in this
+<tt class="docutils literal">main.c</tt>:</p>
+<div class="highlight"><pre><span></span><span class="cp">#include</span> <span class="cpf">&lt;stdio.h&gt;</span><span class="cp"></span>
+<span class="cp">#include</span> <span class="cpf">&quot;ext_lib.h&quot;</span><span class="cp"></span>
+
+
+<span class="k">static</span> <span class="n">mystruct</span> <span class="n">bar</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="o">&amp;</span><span class="n">foo</span><span class="p">,</span>
+    <span class="mh">0xfdfdfdfd</span>
+<span class="p">};</span>
+
+
+<span class="kt">int</span> <span class="nf">main</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span> <span class="p">{</span>
+    <span class="n">printf</span><span class="p">(</span><span class="s">&quot;bar.a: %p</span><span class="se">\n</span><span class="s">bar.b: %d</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span> <span class="n">bar</span><span class="p">.</span><span class="n">a</span><span class="p">,</span> <span class="n">bar</span><span class="p">.</span><span class="n">b</span><span class="p">);</span>
+    <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+<p>where <tt class="docutils literal">ext_lib.h</tt> contains the following definitions:</p>
+<div class="highlight"><pre><span></span><span class="cp">#if defined(__CYGWIN__) || defined(_WIN32)</span>
+    <span class="cp">#ifdef DLLEXPORT</span>
+        <span class="cp">#define DATA(RTYPE) extern __declspec(dllexport) RTYPE</span>
+    <span class="cp">#else</span>
+        <span class="cp">#define DATA(RTYPE) extern __declspec(dllimport) RTYPE</span>
+    <span class="cp">#endif</span>
+<span class="cp">#else</span>
+    <span class="cp">#define DATA(RTYPE) extern RTYPE</span>
+<span class="cp">#endif</span>
+
+
+<span class="k">typedef</span> <span class="k">struct</span> <span class="n">_mystruct</span> <span class="p">{</span>
+    <span class="kt">int</span> <span class="o">*</span><span class="n">a</span><span class="p">;</span>
+    <span class="kt">int</span> <span class="n">b</span><span class="p">;</span>
+<span class="p">}</span> <span class="n">mystruct</span><span class="p">;</span>
+
+
+<span class="n">DATA</span><span class="p">(</span><span class="kt">int</span><span class="p">)</span> <span class="n">foo</span><span class="p">;</span>
+</pre></div>
+<div class="note">
+<p class="first admonition-title">Note</p>
+<p class="last">If you're puzzled by the above definition of the <tt class="docutils literal">DATA</tt> macro, this
+has to do with proper handling of the <tt class="docutils literal">__declspec(dllexport)</tt> and
+<tt class="docutils literal">__declspec(dllimport)</tt> storage classes on Windows.  For a review of
+this, and in general of how data and function imports work in Windows
+see <a class="reference external" href="http://blog.omega-prime.co.uk/2011/07/04/everything-you-never-wanted-to-know-about-dlls/">Everything You Never Wanted to Know About DLLs</a>.</p>
+</div>
+<p>The mystery is that the above code compiles <em>just fine</em> on Linux:</p>
+<pre class="literal-block">
+gcc -c main.c -o main.o
+</pre>
+<p>However, on Windows (I am using Cygwin, but the same problem can be
+reproduced using MSVC):</p>
+<pre class="literal-block">
+$ gcc -c main.c -o main.o
+main.c:6:5: error: initializer element is not constant
+     &amp;foo,
+     ^
+main.c:6:5: note: (near initialization for ‘bar.a’)
+</pre>
+<p>I have known for some time that this related somehow to how DLL data imports
+work, and the use of <tt class="docutils literal">__declspec(dllimport)</tt>, but I admit that I have
+struggled to articulate <em>exactly</em> why this is happening on Windows, and why
+the error occurs at <em>compile time</em> as opposed to link time.  For a spell I
+thought it might even be a bug in gcc, until I was able to demonstrate the
+same behavior in MSVC:</p>
+<pre class="literal-block">
+&gt;cl -c main.c
+Microsoft (R) C/C++ Optimizing Compiler Version 19.00.24213.1 for x64
+Copyright (C) Microsoft Corporation.  All rights reserved.
+
+main.c
+main.c(5): error C2099: initializer is not a constant
+</pre>
+</div>
+<div class="section" id="constant-expressions-and-rules-lawyering">
+<h2>Constant expressions and rules lawyering</h2>
+<p>Taking a step back a bit, let's look at what this error message,
+&quot;initializer element is not constant&quot;, actually means.  I spent a while
+googling this, and while there <em>is</em> a clear and simple answer, that answer
+doesn't immediately obviously apply to the case at hand.</p>
+<p>This error relates to limitations in the C standard as to what is allowed
+when intializing some struct or other file-level variables.  Specifically,
+going off the C99 standard, section 6.7.8 constraint 4:</p>
+<blockquote>
+All the expressions in an initializer for an object that has static
+storage duration shall be constant expressions or string literals.</blockquote>
+<p>For example, the following is not allowed by the C standard at the file
+level:</p>
+<div class="highlight"><pre><span></span><span class="k">const</span> <span class="kt">int</span> <span class="n">N</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+<span class="kt">int</span> <span class="o">*</span><span class="n">M</span> <span class="o">=</span> <span class="n">N</span><span class="p">;</span>
+</pre></div>
+<p>Even though <tt class="docutils literal">N</tt> is declared <tt class="docutils literal">const</tt>, <tt class="docutils literal">N</tt> by itself is pretty clearly
+(I think) not a constant expression from the C compiler's perspective (C++
+will allow it, however, due to its advanced compile-time execution
+capabilities).</p>
+<p>Okay, but what <em>exactly</em> constitutes a &quot;constant expression&quot;?  In fact,
+there's a whole section on that--section 6.6.  In general it's what you'd
+expect, such as an integer expression with a constant value that can be
+determined at compile time.  There are some more advanced cases, however,
+such as:</p>
+<blockquote>
+<div class="line-block">
+<div class="line">More latitude is permitted for constant expressions in initializers.</div>
+<div class="line">Such a constant expression shall be, or evaluate to, one of the</div>
+<div class="line">following:</div>
+<div class="line"><br /></div>
+<div class="line">— an arithmetic constant expression,</div>
+<div class="line">— a null pointer constant,</div>
+<div class="line">— an address constant, or</div>
+<div class="line">— an address constant for an object type plus or minus an integer</div>
+<div class="line-block">
+<div class="line">constant expression.</div>
+</div>
+</div>
+</blockquote>
+<p>Okay, so our <tt class="docutils literal">&amp;foo</tt> looks like it could be interpreted as an address
+constant--it is an address after all.  But we should also check exactly what
+is meant by &quot;address constant&quot;:</p>
+<blockquote>
+An <em>address constant</em> is a null pointer, a pointer to an lvalue
+designating an object of static storage duration, or a pointer to a
+function designator; it shall be created explicitly using the unary
+<tt class="docutils literal">&amp;</tt> operator or an integer constant cast to pointer type, or
+implicitly by the use of an expression of array or function type.</blockquote>
+<p>So we then need to ask, does <tt class="docutils literal">foo</tt> have static storage duration?  The
+short answer, generally, is &quot;yes&quot;.  But we need to think about why that is
+apparently considered <em>not</em> the case in the very Windows-specific case of
+a data object declared <tt class="docutils literal">extern __declspec(dllimport)</tt>.</p>
+</div>
+<div class="section" id="link-time-relocations-and-extern-data">
+<h2>Link time relocations and extern data</h2>
+<p>It makes sense that the C standard explicitly writes &quot;static storage
+duration&quot; when defining what it means by an &quot;address constant&quot;.  From the
+PoV of the C compiler it is mostly concerned just with a single translation
+unit (TU)--i.e. a single <tt class="docutils literal">.c</tt> source file.  If we had some
+static-declared variable like:</p>
+<div class="highlight"><pre><span></span><span class="k">static</span> <span class="kt">int</span> <span class="n">foo</span> <span class="o">=</span> <span class="mh">0x55555555</span><span class="p">;</span>
+</pre></div>
+<p>the compiler would reserve a space for this data in the <tt class="docutils literal">.data</tt> section of
+the object file, which has a fixed location--or address--within the file.
+So when we then define <tt class="docutils literal">bar = {&amp;foo, <span class="pre">...}</span></tt>, the compiler can also place
+bar's data in the <tt class="docutils literal">.data</tt> section, filling it in with the absolute
+address of <tt class="docutils literal">foo</tt>, and so on.</p>
+<p>Of course, that is the most naïve point of view--things more complicated
+when we consider linking multiple object files, or runtime relocations due
+to the fact that our code is not necessarily loaded at a fixed virtual
+memory address.  Nevertheless, the compiler has some intelligence as to what
+will happen.  In fact, it will leave the exact value of <tt class="docutils literal">bar.a</tt> empty for
+now, and include a relocation entry for the linker to fill in later, as it
+may combine one or more TUs and their respective <tt class="docutils literal">.data</tt>, <tt class="docutils literal">.text</tt>, and
+other sections and things will get moved around.  This is an implementation
+detail at the level of binary object files, with which the C standard is
+mostly unconcerned.</p>
+<p>Link-time relocations can be quite sophisticated, and can put almost
+anything almost anywhere in the file.  We can easily relocate data in the
+<tt class="docutils literal">.data</tt> section of the file.  For example, after recompiling <tt class="docutils literal">main.c</tt>
+(on Linux) with the above <tt class="docutils literal">static</tt> redefinition of <tt class="docutils literal">foo</tt>:</p>
+<pre class="literal-block">
+$ objdump -r -j .data main.o
+
+main.o:     file format elf64-x86-64
+
+RELOCATION RECORDS FOR [.data]:
+OFFSET           TYPE              VALUE
+0000000000000010 R_X86_64_64       .data
+</pre>
+<p>This says, take 64 bits from the value of <tt class="docutils literal">.data</tt> and put them at offset
+<tt class="docutils literal">0x10</tt> within the <tt class="docutils literal">.data</tt> section.  Whereas the value <tt class="docutils literal">.data</tt> refers
+to the address of the <tt class="docutils literal">.data</tt> section itself.  Looking at the contents of
+the <tt class="docutils literal">.data</tt> section we can clearly see that the value of our <tt class="docutils literal">foo</tt> is
+the first thing there:</p>
+<pre class="literal-block">
+$ objdump -s -j .data main.o
+
+main.o:     file format elf64-x86-64
+
+Contents of section .data:
+ 0000 55555555 00000000 00000000 00000000  UUUU............
+ 0010 00000000 00000000 ffffffff 00000000  ................
+</pre>
+<p>When we pass this through the linker, things might get moved around a bit,
+but not so much if we just pass in this single TU.  After running <tt class="docutils literal">gcc
+main.o <span class="pre">-o</span> main</tt> we see:</p>
+<pre class="literal-block">
+$ objdump -s -j .data main
+
+main:     file format elf64-x86-64
+
+Contents of section .data:
+ 601030 00000000 00000000 00000000 00000000  ................
+ 601040 55555555 00000000 00000000 00000000  UUUU............
+ 601050 40106000 00000000 ffffffff 00000000  &#64;.`.............
+</pre>
+<p>So some things <em>did</em> get moved around a bit, but we can see <tt class="docutils literal">0x55555555</tt>,
+the value of our <tt class="docutils literal">foo</tt> at the offset <tt class="docutils literal">0x00601040</tt>, and just below it
+is the value of our <tt class="docutils literal">bar</tt> with <tt class="docutils literal">0x00601040</tt>, the address of <tt class="docutils literal">foo</tt>,
+filled in as a constant.  So after linking this was still effectively a
+constant address, and the compiler understand this will be the case.</p>
+</div>
+<div class="section" id="run-time-dynamic-relocation">
+<h2>Run time dynamic relocation</h2>
+<p>What if we go back to our original code, where on Linux we declared <tt class="docutils literal">foo</tt>
+as an <tt class="docutils literal">extern int foo</tt>?  In fact on Linux, GCC will let us get away with
+this for I think a few reasons.  First of all, <tt class="docutils literal">extern</tt> essentially just
+means that <tt class="docutils literal">foo</tt> is defined in another TU, so it will have to be resolved
+somehow by the linker.  After re-compiling <tt class="docutils literal">main.c</tt> the resulting object
+file looks almost the same, though the relocation records for <tt class="docutils literal">.data</tt> look
+slightly different:</p>
+<pre class="literal-block">
+$ objdump -r -j .data main.o
+
+main.o:     file format elf64-x86-64
+
+RELOCATION RECORDS FOR [.data]:
+OFFSET           TYPE              VALUE
+0000000000000010 R_X86_64_64       foo
+</pre>
+<p>The symbol &quot;foo&quot; is undefined in this object file; it will be up to the
+linker to resolve &quot;foo&quot; from some other object file, and fill its final
+address in to the <tt class="docutils literal">.data</tt> section.</p>
+<p>Indeed, the original problem does have to do with the
+<tt class="docutils literal">__declspec(dllimport)</tt> in the declaration of <tt class="docutils literal">foo</tt>.  If we change the
+<tt class="docutils literal">DATA(int) foo;</tt> in <tt class="docutils literal">ext_lib.h</tt> to just <tt class="docutils literal">extern int foo;</tt> it will
+compile just fine on Windows too, with the expectation that &quot;foo&quot; will be
+resolved at link time.</p>
+<p>But what if &quot;foo&quot; isn't resolved at link time?  On Linux this is technically
+not always a problem, though for programs all symbols do require to be
+resolved at link time so we pass <tt class="docutils literal"><span class="pre">-lext_lib</span></tt> to <tt class="docutils literal">gcc</tt>.  However, now
+<tt class="docutils literal">foo</tt> comes from a shared library, whose runtime address <em>cannot</em> be known
+ahead of time by the executable.  So we still need some way of resolving the
+address of <tt class="docutils literal">foo</tt> at run time.  One way, which is used here, is to create
+an entry for it as a dynamic relocation entry, which is explained in more
+detail in <a class="reference external" href="https://eli.thegreenplace.net/2011/08/25/load-time-relocation-of-shared-libraries">Load-time relocation of shared libraries</a>.</p>
+<p>Again, on Linux, after linking main (after also compiling <tt class="docutils literal">ext_lib</tt>, which
+just contains the definition of <tt class="docutils literal">foo</tt>) with:</p>
+<pre class="literal-block">
+$ gcc -L. main.o -lext_lib -o main
+</pre>
+<p>the resulting executable contains a dynamic relocation table which includes
+an entry for <tt class="docutils literal">foo</tt>:</p>
+<pre class="literal-block">
+$ objdump -R main
+
+main:     file format elf64-x86-64
+
+DYNAMIC RELOCATION RECORDS
+OFFSET           TYPE              VALUE
+0000000000600ff8 R_X86_64_GLOB_DAT  __gmon_start__
+0000000000601050 R_X86_64_64       foo
+0000000000601018 R_X86_64_JUMP_SLOT  printf
+0000000000601020 R_X86_64_JUMP_SLOT  __libc_start_main
+0000000000601028 R_X86_64_JUMP_SLOT  __gmon_start__
+</pre>
+<p>This record indicates that the address of <tt class="docutils literal">foo</tt>, once known by the loader,
+should be filled in at the offset <tt class="docutils literal">0x00601050</tt>, which just as before
+happens to the location of <tt class="docutils literal">bar</tt> within the <tt class="docutils literal">.data</tt> section of the
+image.  We can confirm this running the program under gdb:</p>
+<pre class="literal-block">
+(gdb) x/g 0x00601050
+0x601050 &lt;bar&gt;: 0x00007ffff7dd9030
+(gdb) x/w 0x00007ffff7dd9030
+0x7ffff7dd9030 &lt;foo&gt;:   0x55555555
+</pre>
+<p>We can see that because the loader allows relocations in the <tt class="docutils literal">.data</tt>
+section, because this all happens before the program begins running, from
+the program's perspective <tt class="docutils literal">bar</tt> is correctly initialized at start-up as
+required, even though <tt class="docutils literal">foo</tt> happens to be in a shared library.</p>
+<p>This works because the ELF binary loader allows for dynamic relocations just
+about as sophisticated as at link time.  Unfortunately, this is not so on
+Windows.  The way PE/COFF files work, and hence the way Windows' dynamic
+loader works, is that there exists an Import Address Table (IAT), explained
+<a class="reference external" href="https://msdn.microsoft.com/en-us/magazine/bb985992.aspx">here</a> among a
+few other resources.  The table contains just one entry for each &quot;imported&quot;
+object (functions and data declared with <tt class="docutils literal">__declspec(dllimport)</tt>.  At
+runtime this table is filled in with the addresses of each symbol as the
+DLLs they live in are loaded.  You can also see, in the assembly, that
+references to the symbol <tt class="docutils literal">foo</tt> are replaced in the source with
+<tt class="docutils literal">__imp_foo</tt>, where <tt class="docutils literal">__imp_foo</tt> refers to the IAT entry for <tt class="docutils literal">foo</tt>.</p>
+<p>To demonstrate this, first we need to write some code that can actually be
+compiled on Windows.  The workaround to this entire problem is, fortunately,
+reasonably simple--just replace the <tt class="docutils literal">&amp;foo</tt> with <tt class="docutils literal">NULL</tt>, and finish
+initializing <tt class="docutils literal">bar</tt> at runtime:</p>
+<div class="highlight"><pre><span></span><span class="k">static</span> <span class="n">mystruct</span> <span class="n">bar</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="nb">NULL</span><span class="p">,</span>
+    <span class="mi">0</span>
+<span class="p">};</span>
+
+
+<span class="kt">int</span> <span class="nf">main</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">bar</span><span class="p">.</span><span class="n">a</span> <span class="o">==</span> <span class="nb">NULL</span><span class="p">)</span>
+        <span class="n">bar</span><span class="p">.</span><span class="n">a</span> <span class="o">=</span> <span class="o">&amp;</span><span class="n">foo</span><span class="p">;</span>
+
+    <span class="n">printf</span><span class="p">(</span><span class="s">&quot;bar.a: %p</span><span class="se">\n</span><span class="s">bar.b: %d</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span> <span class="n">bar</span><span class="p">.</span><span class="n">a</span><span class="p">,</span> <span class="n">bar</span><span class="p">.</span><span class="n">b</span><span class="p">);</span>
+    <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+<p>Looking at the assembly with <tt class="docutils literal">objdump <span class="pre">-dzr</span> main.o</tt> shows:</p>
+<pre class="literal-block">
+0000000000000000 &lt;main&gt;:
+   0:   55                      push   %rbp
+   1:   48 89 e5                mov    %rsp,%rbp
+   4:   48 83 ec 20             sub    $0x20,%rsp
+   8:   e8 00 00 00 00          callq  d &lt;main+0xd&gt;
+                        9: R_X86_64_PC32        __main
+   d:   48 8b 05 00 00 00 00    mov    0x0(%rip),%rax        # 14 &lt;main+0x14&gt;
+                        10: R_X86_64_PC32       .bss
+  14:   48 85 c0                test   %rax,%rax
+  17:   75 0e                   jne    27 &lt;main+0x27&gt;
+  19:   48 8b 05 00 00 00 00    mov    0x0(%rip),%rax        # 20 &lt;main+0x20&gt;
+                        1c: R_X86_64_PC32       __imp_foo
+  20:   48 89 05 00 00 00 00    mov    %rax,0x0(%rip)        # 27 &lt;main+0x27&gt;
+                        23: R_X86_64_PC32       .bss
+  27:   8b 15 08 00 00 00       mov    0x8(%rip),%edx        # 35 &lt;main+0x35&gt;
+                        29: R_X86_64_PC32       .bss
+  2d:   48 8b 05 00 00 00 00    mov    0x0(%rip),%rax        # 34 &lt;main+0x34&gt;
+                        30: R_X86_64_PC32       .bss
+  34:   41 89 d0                mov    %edx,%r8d
+  37:   48 89 c2                mov    %rax,%rdx
+  3a:   48 8d 0d 00 00 00 00    lea    0x0(%rip),%rcx        # 41 &lt;main+0x41&gt;
+                        3d: R_X86_64_PC32       .rdata
+  41:   e8 00 00 00 00          callq  46 &lt;main+0x46&gt;
+                        42: R_X86_64_PC32       printf
+  46:   b8 00 00 00 00          mov    $0x0,%eax
+  4b:   48 83 c4 20             add    $0x20,%rsp
+  4f:   5d                      pop    %rbp
+  50:   c3                      retq
+</pre>
+<p>The important bit is the instruction at offset <tt class="docutils literal">0x19</tt>.  Here we can see
+there's an IP-relative (as this is 64-bit Windows) load from some address
+for which we have a relocation for the symbol <tt class="docutils literal">__imp_foo</tt> (<em>not</em> just
+<tt class="docutils literal">foo</tt>).  We can see that <tt class="docutils literal">bar</tt>, now being uninitialized, is in <tt class="docutils literal">.bss</tt>
+instead of <tt class="docutils literal">.data</tt>, but <tt class="docutils literal">__imp_foo</tt> is somewhere else--but where?</p>
+<p>Well we already said, <tt class="docutils literal">__imp_foo</tt> is actually a reference to the IAT,
+which lives in a different segment.  Again, we can see this especially
+easily at runtime.  I noticed while playing around with this that there are
+special symbols named <tt class="docutils literal">__IAT_start__</tt> and <tt class="docutils literal">__IAT_end__</tt> specifying
+exactly where the IAT is in memory, and sure enough we can see that's where
+<tt class="docutils literal">__imp_foo</tt> is:</p>
+<pre class="literal-block">
+(gdb) info addr __imp_foo
+Symbol &quot;__imp_foo&quot; is at 0x100408170 in a file compiled without debugging.
+(gdb) info addr __IAT_start__
+Symbol &quot;__IAT_start__&quot; is at 0x1004080e8 in a file compiled without debugging.
+(gdb) info addr __IAT_end__
+Symbol &quot;__IAT_end__&quot; is at 0x100408180 in a file compiled without debugging.
+</pre>
+<p><tt class="docutils literal">__imp_foo</tt> is at a fixed address relative to code that references it, so
+the linker easily fixes up <em>those</em> relocations.  But because the IAT is
+otherwise the only place where the loader fills the address of <tt class="docutils literal">foo</tt> at
+runtime, the loader cannot initialize static data with the address of
+<tt class="docutils literal">foo</tt>.</p>
+</div>
+<div class="section" id="conclusion">
+<h2>Conclusion</h2>
+<p>TL;DR when loading Windows binaries we can't perform relocations in the
+<tt class="docutils literal">.data</tt> section, so it's actually impossible to initialize objects with
+static storage duration with data from an external DLL.  Initialization of
+objects such as <tt class="docutils literal">bar</tt> have to be completed after the fact at runtime and
+there's just no good way around it.</p>
+<p>Fortunately, both GCC and MSVC are smart enough to know that this will be
+the case for variables declared with <tt class="docutils literal">__declspec(dllimport)</tt>.  It knows
+that <tt class="docutils literal">foo</tt>--specifically <tt class="docutils literal">__imp_foo</tt>--effectively does not have static
+storage duration, so its address cannot be used to initialize a struct.</p>
+</div>
+<div class="section" id="bonus-why-does-it-work-for-functions-but-not-data">
+<h2>Bonus: Why does it work for functions but not data?</h2>
+<p>What if we took the original code, and changed the declaration of <tt class="docutils literal">foo</tt>
+to a function, like:</p>
+<div class="highlight"><pre><span></span><span class="n">DATA</span><span class="p">(</span><span class="kt">int</span><span class="p">)</span> <span class="n">foo</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span>
+</pre></div>
+<p>(ignoring the fact that the <tt class="docutils literal">DATA</tt> macro is now a misnomer; it still has
+the same effect) and also update the definition of <tt class="docutils literal">mystruct</tt> so that the
+<tt class="docutils literal">mystruct.a</tt> member is a function pointer:</p>
+<div class="highlight"><pre><span></span><span class="k">typedef</span> <span class="k">struct</span> <span class="n">_mystruct</span> <span class="p">{</span>
+    <span class="kt">int</span> <span class="p">(</span><span class="o">*</span><span class="n">a</span><span class="p">)();</span>
+    <span class="kt">int</span> <span class="n">b</span><span class="p">;</span>
+<span class="p">}</span> <span class="n">mystruct</span><span class="p">;</span>
+</pre></div>
+<p>Now recompile <tt class="docutils literal">main.c</tt> and it works, even on Windows!  We can also see
+that the relevant assembly (which reads from <tt class="docutils literal">bar.a</tt> in order to pass it
+to <tt class="docutils literal">printf</tt>) shows:</p>
+<pre class="literal-block">
+2d:   48 8b 05 00 00 00 00    mov    0x0(%rip),%rax        # 34 &lt;main+0x34&gt;
+                      30: R_X86_64_PC32       .data
+</pre>
+<p>So the object file actually references a relocation in <tt class="docutils literal">.data</tt> (just as it
+did on Linux when <tt class="docutils literal">foo</tt> was a mere <tt class="docutils literal">int</tt>):</p>
+<pre class="literal-block">
+$ objdump -r -j .data main.o
+
+main.o:     file format pe-x86-64
+
+RELOCATION RECORDS FOR [.data]:
+OFFSET           TYPE              VALUE
+0000000000000000 R_X86_64_64       foo
+</pre>
+<p>No reference here to <tt class="docutils literal">__imp_foo</tt>.</p>
+<p>At risk of vastly oversimplifying, for historical (?) reasons Windows
+binaries contain symbols for all the function used in that particular
+binary, even if they are imported from an external DLL.  Normally, when we
+link an executable that uses code from a DLL, we pass the linker an &quot;import
+library&quot; which contains stub definitions for all the functions in the
+related DLL.  The stub function, which is included in the executable,
+contains just a <tt class="docutils literal">jmp</tt> to <tt class="docutils literal">__imp_foo</tt>.  And in fact, when we declare a
+function with <tt class="docutils literal">__declspec(dllimport)</tt>, this allows the compiler to bypass
+generating code like <tt class="docutils literal">call foo</tt>, and go straight to <tt class="docutils literal">call __imp_foo</tt>,
+bypassing the stub function altogether.  But the stub function nevertheless
+still exists.</p>
+<p>In fact, we can see in the linked executable exactly what winds up in the
+<tt class="docutils literal">.data</tt> section:</p>
+<pre class="literal-block">
+main:     file format pei-x86-64
+
+Contents of section .data:
+ 100402000 00000000 00000000 00000000 00000000  ................
+ 100402010 40114000 01000000 00000000 00000000  &#64;.&#64;.............
+ 100402020 00000000 00000000 00000000 00000000  ................
+ 100402030 00000000 00000000 00000000 00000000  ................
+ 100402040 00000000 00000000 00000000 00000000  ................
+ 100402050 00000000 00000000 00000000 00000000  ................
+ 100402060 00000000 00000000                    ........
+</pre>
+<p>Although not immediately obvious, the value <tt class="docutils literal">0x010041140</tt> at offset
+<tt class="docutils literal">0x100402010</tt> is the address of the <em>stub function</em> for <tt class="docutils literal">bar</tt>.  From the
+section headings we can see the offset off the <tt class="docutils literal">.text</tt> section is at
+<tt class="docutils literal">0x100401000</tt>:</p>
+<pre class="literal-block">
+Sections:
+Idx Name          Size      VMA               LMA               File off  Algn
+  0 .text         000007c8  0000000100401000  0000000100401000  00000600  2**4
+                  CONTENTS, ALLOC, LOAD, READONLY, CODE, DATA
+</pre>
+<p>And the symbol table shows the stub function at:</p>
+<pre class="literal-block">
+[673](sec  1)(fl 0x00)(ty  20)(scl   2) (nx 0) 0x0000000000000140 foo
+</pre>
+<p>Add them together and you get <tt class="docutils literal">0x0100401140</tt>.  So what we see is that
+<tt class="docutils literal">bar</tt> is initialized <strong>not</strong> with the actual address of the <tt class="docutils literal">foo</tt>
+function, but with the address of its <em>stub function</em>.  This is assumed to
+be good enough since the calling <tt class="docutils literal">foo.a</tt> as a function will still
+ultimately jump to the real function, and should work fine for most other
+purposes as well, but it could be a little surprising and misleading,
+especially while debugging.</p>
+</div>
+
+    </article>
+
+        <div class="tags">
+            <p>tags: <a href="https://iguananaut.net/tag/c.html">c</a>, <a href="https://iguananaut.net/tag/windows.html">windows</a>, <a href="https://iguananaut.net/tag/dlls.html">dlls</a>, <a href="https://iguananaut.net/tag/compilers.html">compilers</a>, <a href="https://iguananaut.net/tag/debugging.html">debugging</a></p>
+        </div>
+
+<hr>
+<div class="sharing">
+</div>
+    <hr>
+
+        <div class="comments">
+            <h2>Comments !</h2>
+            <div id="disqus_thread"></div>
+            <script type="text/javascript">
+                var disqus_shortname = 'iguananaut';
+                var disqus_identifier = 'blog/programming/windows-data-import.html';
+                var disqus_url = 'https://iguananaut.net/blog/programming/windows-data-import.html';
+                (function() {
+                    var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+                    dsq.src = '//iguananaut.disqus.com/embed.js';
+                    (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+                })();
+            </script>
+            <noscript>Please enable JavaScript to view the comments.</noscript>
+        </div>
+            </div>
+        </div>
+    </div>
+
+    <hr>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="row">
+                <div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1">
+                    <ul class="list-inline text-center">
+                            <li>
+                                <a href="https://twitter.com/iguananaut">
+                                    <span class="fa-stack fa-lg">
+                                        <i class="fa fa-circle fa-stack-2x"></i>
+                                        <i class="fa fa-twitter fa-stack-1x fa-inverse"></i>
+                                    </span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="http://www.linkedin.com/pub/erik-bray/19/2a8/a22">
+                                    <span class="fa-stack fa-lg">
+                                        <i class="fa fa-circle fa-stack-2x"></i>
+                                        <i class="fa fa-linkedin fa-stack-1x fa-inverse"></i>
+                                    </span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="http://stackoverflow.com/users/982257/iguananaut">
+                                    <span class="fa-stack fa-lg">
+                                        <i class="fa fa-circle fa-stack-2x"></i>
+                                        <i class="fa fa-stack-overflow fa-stack-1x fa-inverse"></i>
+                                    </span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="https://github.com/embray">
+                                    <span class="fa-stack fa-lg">
+                                        <i class="fa fa-circle fa-stack-2x"></i>
+                                        <i class="fa fa-github fa-stack-1x fa-inverse"></i>
+                                    </span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="https://bitbucket.com/embray">
+                                    <span class="fa-stack fa-lg">
+                                        <i class="fa fa-circle fa-stack-2x"></i>
+                                        <i class="fa fa-bitbucket fa-stack-1x fa-inverse"></i>
+                                    </span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="mailto:erik.m.bray@gmail.com">
+                                    <span class="fa-stack fa-lg">
+                                        <i class="fa fa-circle fa-stack-2x"></i>
+                                        <i class="fa fa-envelope fa-stack-1x fa-inverse"></i>
+                                    </span>
+                                </a>
+                            </li>
+                    </ul>
+<p style="font-size: small"><span xmlns:dct="http://purl.org/dc/terms/" property="dct:title" class="site-name">
+  iguananaut.net
+</span> by
+<a xmlns:cc="http://creativecommons.org/ns#" href="https://iguananaut.net" property="cc:attributionName" rel="cc:attributionURL">
+  Erik M. Bray
+</a> is licensed under a
+<a rel="license" href="http://creativecommons.org/licenses/by-sa/3.0/deed.en_US">
+  Creative Commons Attribution-ShareAlike 3.0 Unported License
+</a></p>                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- jQuery -->
+    <script src="https://iguananaut.net/theme/js/jquery.js"></script>
+
+    <!-- Bootstrap Core JavaScript -->
+    <script src="https://iguananaut.net/theme/js/bootstrap.min.js"></script>
+
+
+    <script type="text/javascript">
+    var _gaq = _gaq || [];
+    _gaq.push(['_setAccount', 'UA-46117138-1']);
+    _gaq.push(['_trackPageview']);
+    (function() {
+        var ga = document.createElement('script'); ga.type = 'text/javascript'; ga.async = true;
+        ga.src = ('https:' == document.location.protocol ? 'https://ssl' : 'http://www') + '.google-analytics.com/ga.js';
+        var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(ga, s);
+    })();
+    </script>
+<script type="text/javascript">
+    var disqus_shortname = 'iguananaut';
+    (function () {
+        var s = document.createElement('script'); s.async = true;
+        s.type = 'text/javascript';
+        s.src = '//' + disqus_shortname + '.disqus.com/count.js';
+        (document.getElementsByTagName('HEAD')[0] || document.getElementsByTagName('BODY')[0]).appendChild(s);
+    }());
+</script>
+</body>
+
+</html>

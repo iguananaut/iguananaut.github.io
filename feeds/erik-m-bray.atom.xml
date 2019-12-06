@@ -1,0 +1,891 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><title>from iguananaut import braindump</title><link href="https://iguananaut.net/" rel="alternate"></link><link href="https://iguananaut.net/feeds/erik-m-bray.atom.xml" rel="self"></link><id>https://iguananaut.net/</id><updated>2018-08-03T00:00:00+02:00</updated><entry><title>A DLL Data Import Mystery</title><link href="https://iguananaut.net/blog/programming/windows-data-import.html" rel="alternate"></link><published>2018-08-03T00:00:00+02:00</published><author><name>Erik M. Bray</name></author><id>tag:iguananaut.net,2018-08-03:blog/programming/windows-data-import.html</id><summary type="html">&lt;p&gt;I've been working hard over the years to get CPython better supported on
+Cygwin.  For years, the CPython code base has supported Cygwin off-and-on,
+but it has not been &amp;quot;supported&amp;quot; in many years in the sense of having a
+working build bot, or support from any of the CPython core developers.
+That's a whole other story; but this is about just one relatively minor
+compile-time bug I've seen come up &lt;a class="reference external" href="https://bugs.python.org/issue21124"&gt;multiple&lt;/a&gt; &lt;a class="reference external" href="https://bugs.python.org/issue34211"&gt;times&lt;/a&gt; in this porting effort.&lt;/p&gt;
+&lt;div class="section" id="the-problem"&gt;
+&lt;h2&gt;The problem&lt;/h2&gt;
+&lt;p&gt;To demonstrate the problem we don't need anything as complex as CPython.
+In short, the problem arises in the case where we have a shared library, and
+some other executable (either a program or another shared lib) that
+references some data in the first library (and &lt;em&gt;specifically&lt;/em&gt; data, as
+opposed to functions).  In particular, the problem occurs when referencing
+the external data in the initializer of some static struct, as in this
+&lt;tt class="docutils literal"&gt;main.c&lt;/tt&gt;:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="cp"&gt;#include&lt;/span&gt; &lt;span class="cpf"&gt;&amp;lt;stdio.h&amp;gt;&lt;/span&gt;&lt;span class="cp"&gt;&lt;/span&gt;
+&lt;span class="cp"&gt;#include&lt;/span&gt; &lt;span class="cpf"&gt;&amp;quot;ext_lib.h&amp;quot;&lt;/span&gt;&lt;span class="cp"&gt;&lt;/span&gt;
+
+
+&lt;span class="k"&gt;static&lt;/span&gt; &lt;span class="n"&gt;mystruct&lt;/span&gt; &lt;span class="n"&gt;bar&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;foo&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+    &lt;span class="mh"&gt;0xfdfdfdfd&lt;/span&gt;
+&lt;span class="p"&gt;};&lt;/span&gt;
+
+
+&lt;span class="kt"&gt;int&lt;/span&gt; &lt;span class="nf"&gt;main&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="kt"&gt;void&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="n"&gt;printf&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;&amp;quot;bar.a: %p&lt;/span&gt;&lt;span class="se"&gt;\n&lt;/span&gt;&lt;span class="s"&gt;bar.b: %d&lt;/span&gt;&lt;span class="se"&gt;\n&lt;/span&gt;&lt;span class="s"&gt;&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;bar&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;bar&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;where &lt;tt class="docutils literal"&gt;ext_lib.h&lt;/tt&gt; contains the following definitions:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="cp"&gt;#if defined(__CYGWIN__) || defined(_WIN32)&lt;/span&gt;
+    &lt;span class="cp"&gt;#ifdef DLLEXPORT&lt;/span&gt;
+        &lt;span class="cp"&gt;#define DATA(RTYPE) extern __declspec(dllexport) RTYPE&lt;/span&gt;
+    &lt;span class="cp"&gt;#else&lt;/span&gt;
+        &lt;span class="cp"&gt;#define DATA(RTYPE) extern __declspec(dllimport) RTYPE&lt;/span&gt;
+    &lt;span class="cp"&gt;#endif&lt;/span&gt;
+&lt;span class="cp"&gt;#else&lt;/span&gt;
+    &lt;span class="cp"&gt;#define DATA(RTYPE) extern RTYPE&lt;/span&gt;
+&lt;span class="cp"&gt;#endif&lt;/span&gt;
+
+
+&lt;span class="k"&gt;typedef&lt;/span&gt; &lt;span class="k"&gt;struct&lt;/span&gt; &lt;span class="n"&gt;_mystruct&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="kt"&gt;int&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+    &lt;span class="kt"&gt;int&lt;/span&gt; &lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt; &lt;span class="n"&gt;mystruct&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+
+
+&lt;span class="n"&gt;DATA&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="kt"&gt;int&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="n"&gt;foo&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;div class="note"&gt;
+&lt;p class="first admonition-title"&gt;Note&lt;/p&gt;
+&lt;p class="last"&gt;If you're puzzled by the above definition of the &lt;tt class="docutils literal"&gt;DATA&lt;/tt&gt; macro, this
+has to do with proper handling of the &lt;tt class="docutils literal"&gt;__declspec(dllexport)&lt;/tt&gt; and
+&lt;tt class="docutils literal"&gt;__declspec(dllimport)&lt;/tt&gt; storage classes on Windows.  For a review of
+this, and in general of how data and function imports work in Windows
+see &lt;a class="reference external" href="http://blog.omega-prime.co.uk/2011/07/04/everything-you-never-wanted-to-know-about-dlls/"&gt;Everything You Never Wanted to Know About DLLs&lt;/a&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;p&gt;The mystery is that the above code compiles &lt;em&gt;just fine&lt;/em&gt; on Linux:&lt;/p&gt;
+&lt;pre class="literal-block"&gt;
+gcc -c main.c -o main.o
+&lt;/pre&gt;
+&lt;p&gt;However, on Windows (I am using Cygwin, but the same problem can be
+reproduced using MSVC):&lt;/p&gt;
+&lt;pre class="literal-block"&gt;
+$ gcc -c main.c -o main.o
+main.c:6:5: error: initializer element is not constant
+     &amp;amp;foo,
+     ^
+main.c:6:5: note: (near initialization for ‘bar.a’)
+&lt;/pre&gt;
+&lt;p&gt;I have known for some time that this related somehow to how DLL data imports
+work, and the use of &lt;tt class="docutils literal"&gt;__declspec(dllimport)&lt;/tt&gt;, but I admit that I have
+struggled to articulate &lt;em&gt;exactly&lt;/em&gt; why this is happening on Windows, and why
+the error occurs at &lt;em&gt;compile time&lt;/em&gt; as opposed to link time.  For a spell I
+thought it might even be a bug in gcc, until I was able to demonstrate the
+same behavior in MSVC:&lt;/p&gt;
+&lt;pre class="literal-block"&gt;
+&amp;gt;cl -c main.c
+Microsoft (R) C/C++ Optimizing Compiler Version 19.00.24213.1 for x64
+Copyright (C) Microsoft Corporation.  All rights reserved.
+
+main.c
+main.c(5): error C2099: initializer is not a constant
+&lt;/pre&gt;
+&lt;/div&gt;
+&lt;div class="section" id="constant-expressions-and-rules-lawyering"&gt;
+&lt;h2&gt;Constant expressions and rules lawyering&lt;/h2&gt;
+&lt;p&gt;Taking a step back a bit, let's look at what this error message,
+&amp;quot;initializer element is not constant&amp;quot;, actually means.  I spent a while
+googling this, and while there &lt;em&gt;is&lt;/em&gt; a clear and simple answer, that answer
+doesn't immediately obviously apply to the case at hand.&lt;/p&gt;
+&lt;p&gt;This error relates to limitations in the C standard as to what is allowed
+when intializing some struct or other file-level variables.  Specifically,
+going off the C99 standard, section 6.7.8 constraint 4:&lt;/p&gt;
+&lt;blockquote&gt;
+All the expressions in an initializer for an object that has static
+storage duration shall be constant expressions or string literals.&lt;/blockquote&gt;
+&lt;p&gt;For example, the following is not allowed by the C standard at the file
+level:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="k"&gt;const&lt;/span&gt; &lt;span class="kt"&gt;int&lt;/span&gt; &lt;span class="n"&gt;N&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;span class="kt"&gt;int&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;M&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;N&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Even though &lt;tt class="docutils literal"&gt;N&lt;/tt&gt; is declared &lt;tt class="docutils literal"&gt;const&lt;/tt&gt;, &lt;tt class="docutils literal"&gt;N&lt;/tt&gt; by itself is pretty clearly
+(I think) not a constant expression from the C compiler's perspective (C++
+will allow it, however, due to its advanced compile-time execution
+capabilities).&lt;/p&gt;
+&lt;p&gt;Okay, but what &lt;em&gt;exactly&lt;/em&gt; constitutes a &amp;quot;constant expression&amp;quot;?  In fact,
+there's a whole section on that--section 6.6.  In general it's what you'd
+expect, such as an integer expression with a constant value that can be
+determined at compile time.  There are some more advanced cases, however,
+such as:&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;div class="line-block"&gt;
+&lt;div class="line"&gt;More latitude is permitted for constant expressions in initializers.&lt;/div&gt;
+&lt;div class="line"&gt;Such a constant expression shall be, or evaluate to, one of the&lt;/div&gt;
+&lt;div class="line"&gt;following:&lt;/div&gt;
+&lt;div class="line"&gt;&lt;br /&gt;&lt;/div&gt;
+&lt;div class="line"&gt;— an arithmetic constant expression,&lt;/div&gt;
+&lt;div class="line"&gt;— a null pointer constant,&lt;/div&gt;
+&lt;div class="line"&gt;— an address constant, or&lt;/div&gt;
+&lt;div class="line"&gt;— an address constant for an object type plus or minus an integer&lt;/div&gt;
+&lt;div class="line-block"&gt;
+&lt;div class="line"&gt;constant expression.&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Okay, so our &lt;tt class="docutils literal"&gt;&amp;amp;foo&lt;/tt&gt; looks like it could be interpreted as an address
+constant--it is an address after all.  But we should also check exactly what
+is meant by &amp;quot;address constant&amp;quot;:&lt;/p&gt;
+&lt;blockquote&gt;
+An &lt;em&gt;address constant&lt;/em&gt; is a null pointer, a pointer to an lvalue
+designating an object of static storage duration, or a pointer to a
+function designator; it shall be created explicitly using the unary
+&lt;tt class="docutils literal"&gt;&amp;amp;&lt;/tt&gt; operator or an integer constant cast to pointer type, or
+implicitly by the use of an expression of array or function type.&lt;/blockquote&gt;
+&lt;p&gt;So we then need to ask, does &lt;tt class="docutils literal"&gt;foo&lt;/tt&gt; have static storage duration?  The
+short answer, generally, is &amp;quot;yes&amp;quot;.  But we need to think about why that is
+apparently considered &lt;em&gt;not&lt;/em&gt; the case in the very Windows-specific case of
+a data object declared &lt;tt class="docutils literal"&gt;extern __declspec(dllimport)&lt;/tt&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="link-time-relocations-and-extern-data"&gt;
+&lt;h2&gt;Link time relocations and extern data&lt;/h2&gt;
+&lt;p&gt;It makes sense that the C standard explicitly writes &amp;quot;static storage
+duration&amp;quot; when defining what it means by an &amp;quot;address constant&amp;quot;.  From the
+PoV of the C compiler it is mostly concerned just with a single translation
+unit (TU)--i.e. a single &lt;tt class="docutils literal"&gt;.c&lt;/tt&gt; source file.  If we had some
+static-declared variable like:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="k"&gt;static&lt;/span&gt; &lt;span class="kt"&gt;int&lt;/span&gt; &lt;span class="n"&gt;foo&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mh"&gt;0x55555555&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;the compiler would reserve a space for this data in the &lt;tt class="docutils literal"&gt;.data&lt;/tt&gt; section of
+the object file, which has a fixed location--or address--within the file.
+So when we then define &lt;tt class="docutils literal"&gt;bar = {&amp;amp;foo, &lt;span class="pre"&gt;...}&lt;/span&gt;&lt;/tt&gt;, the compiler can also place
+bar's data in the &lt;tt class="docutils literal"&gt;.data&lt;/tt&gt; section, filling it in with the absolute
+address of &lt;tt class="docutils literal"&gt;foo&lt;/tt&gt;, and so on.&lt;/p&gt;
+&lt;p&gt;Of course, that is the most naïve point of view--things more complicated
+when we consider linking multiple object files, or runtime relocations due
+to the fact that our code is not necessarily loaded at a fixed virtual
+memory address.  Nevertheless, the compiler has some intelligence as to what
+will happen.  In fact, it will leave the exact value of &lt;tt class="docutils literal"&gt;bar.a&lt;/tt&gt; empty for
+now, and include a relocation entry for the linker to fill in later, as it
+may combine one or more TUs and their respective &lt;tt class="docutils literal"&gt;.data&lt;/tt&gt;, &lt;tt class="docutils literal"&gt;.text&lt;/tt&gt;, and
+other sections and things will get moved around.  This is an implementation
+detail at the level of binary object files, with which the C standard is
+mostly unconcerned.&lt;/p&gt;
+&lt;p&gt;Link-time relocations can be quite sophisticated, and can put almost
+anything almost anywhere in the file.  We can easily relocate data in the
+&lt;tt class="docutils literal"&gt;.data&lt;/tt&gt; section of the file.  For example, after recompiling &lt;tt class="docutils literal"&gt;main.c&lt;/tt&gt;
+(on Linux) with the above &lt;tt class="docutils literal"&gt;static&lt;/tt&gt; redefinition of &lt;tt class="docutils literal"&gt;foo&lt;/tt&gt;:&lt;/p&gt;
+&lt;pre class="literal-block"&gt;
+$ objdump -r -j .data main.o
+
+main.o:     file format elf64-x86-64
+
+RELOCATION RECORDS FOR [.data]:
+OFFSET           TYPE              VALUE
+0000000000000010 R_X86_64_64       .data
+&lt;/pre&gt;
+&lt;p&gt;This says, take 64 bits from the value of &lt;tt class="docutils literal"&gt;.data&lt;/tt&gt; and put them at offset
+&lt;tt class="docutils literal"&gt;0x10&lt;/tt&gt; within the &lt;tt class="docutils literal"&gt;.data&lt;/tt&gt; section.  Whereas the value &lt;tt class="docutils literal"&gt;.data&lt;/tt&gt; refers
+to the address of the &lt;tt class="docutils literal"&gt;.data&lt;/tt&gt; section itself.  Looking at the contents of
+the &lt;tt class="docutils literal"&gt;.data&lt;/tt&gt; section we can clearly see that the value of our &lt;tt class="docutils literal"&gt;foo&lt;/tt&gt; is
+the first thing there:&lt;/p&gt;
+&lt;pre class="literal-block"&gt;
+$ objdump -s -j .data main.o
+
+main.o:     file format elf64-x86-64
+
+Contents of section .data:
+ 0000 55555555 00000000 00000000 00000000  UUUU............
+ 0010 00000000 00000000 ffffffff 00000000  ................
+&lt;/pre&gt;
+&lt;p&gt;When we pass this through the linker, things might get moved around a bit,
+but not so much if we just pass in this single TU.  After running &lt;tt class="docutils literal"&gt;gcc
+main.o &lt;span class="pre"&gt;-o&lt;/span&gt; main&lt;/tt&gt; we see:&lt;/p&gt;
+&lt;pre class="literal-block"&gt;
+$ objdump -s -j .data main
+
+main:     file format elf64-x86-64
+
+Contents of section .data:
+ 601030 00000000 00000000 00000000 00000000  ................
+ 601040 55555555 00000000 00000000 00000000  UUUU............
+ 601050 40106000 00000000 ffffffff 00000000  &amp;#64;.`.............
+&lt;/pre&gt;
+&lt;p&gt;So some things &lt;em&gt;did&lt;/em&gt; get moved around a bit, but we can see &lt;tt class="docutils literal"&gt;0x55555555&lt;/tt&gt;,
+the value of our &lt;tt class="docutils literal"&gt;foo&lt;/tt&gt; at the offset &lt;tt class="docutils literal"&gt;0x00601040&lt;/tt&gt;, and just below it
+is the value of our &lt;tt class="docutils literal"&gt;bar&lt;/tt&gt; with &lt;tt class="docutils literal"&gt;0x00601040&lt;/tt&gt;, the address of &lt;tt class="docutils literal"&gt;foo&lt;/tt&gt;,
+filled in as a constant.  So after linking this was still effectively a
+constant address, and the compiler understand this will be the case.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="run-time-dynamic-relocation"&gt;
+&lt;h2&gt;Run time dynamic relocation&lt;/h2&gt;
+&lt;p&gt;What if we go back to our original code, where on Linux we declared &lt;tt class="docutils literal"&gt;foo&lt;/tt&gt;
+as an &lt;tt class="docutils literal"&gt;extern int foo&lt;/tt&gt;?  In fact on Linux, GCC will let us get away with
+this for I think a few reasons.  First of all, &lt;tt class="docutils literal"&gt;extern&lt;/tt&gt; essentially just
+means that &lt;tt class="docutils literal"&gt;foo&lt;/tt&gt; is defined in another TU, so it will have to be resolved
+somehow by the linker.  After re-compiling &lt;tt class="docutils literal"&gt;main.c&lt;/tt&gt; the resulting object
+file looks almost the same, though the relocation records for &lt;tt class="docutils literal"&gt;.data&lt;/tt&gt; look
+slightly different:&lt;/p&gt;
+&lt;pre class="literal-block"&gt;
+$ objdump -r -j .data main.o
+
+main.o:     file format elf64-x86-64
+
+RELOCATION RECORDS FOR [.data]:
+OFFSET           TYPE              VALUE
+0000000000000010 R_X86_64_64       foo
+&lt;/pre&gt;
+&lt;p&gt;The symbol &amp;quot;foo&amp;quot; is undefined in this object file; it will be up to the
+linker to resolve &amp;quot;foo&amp;quot; from some other object file, and fill its final
+address in to the &lt;tt class="docutils literal"&gt;.data&lt;/tt&gt; section.&lt;/p&gt;
+&lt;p&gt;Indeed, the original problem does have to do with the
+&lt;tt class="docutils literal"&gt;__declspec(dllimport)&lt;/tt&gt; in the declaration of &lt;tt class="docutils literal"&gt;foo&lt;/tt&gt;.  If we change the
+&lt;tt class="docutils literal"&gt;DATA(int) foo;&lt;/tt&gt; in &lt;tt class="docutils literal"&gt;ext_lib.h&lt;/tt&gt; to just &lt;tt class="docutils literal"&gt;extern int foo;&lt;/tt&gt; it will
+compile just fine on Windows too, with the expectation that &amp;quot;foo&amp;quot; will be
+resolved at link time.&lt;/p&gt;
+&lt;p&gt;But what if &amp;quot;foo&amp;quot; isn't resolved at link time?  On Linux this is technically
+not always a problem, though for programs all symbols do require to be
+resolved at link time so we pass &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;-lext_lib&lt;/span&gt;&lt;/tt&gt; to &lt;tt class="docutils literal"&gt;gcc&lt;/tt&gt;.  However, now
+&lt;tt class="docutils literal"&gt;foo&lt;/tt&gt; comes from a shared library, whose runtime address &lt;em&gt;cannot&lt;/em&gt; be known
+ahead of time by the executable.  So we still need some way of resolving the
+address of &lt;tt class="docutils literal"&gt;foo&lt;/tt&gt; at run time.  One way, which is used here, is to create
+an entry for it as a dynamic relocation entry, which is explained in more
+detail in &lt;a class="reference external" href="https://eli.thegreenplace.net/2011/08/25/load-time-relocation-of-shared-libraries"&gt;Load-time relocation of shared libraries&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;Again, on Linux, after linking main (after also compiling &lt;tt class="docutils literal"&gt;ext_lib&lt;/tt&gt;, which
+just contains the definition of &lt;tt class="docutils literal"&gt;foo&lt;/tt&gt;) with:&lt;/p&gt;
+&lt;pre class="literal-block"&gt;
+$ gcc -L. main.o -lext_lib -o main
+&lt;/pre&gt;
+&lt;p&gt;the resulting executable contains a dynamic relocation table which includes
+an entry for &lt;tt class="docutils literal"&gt;foo&lt;/tt&gt;:&lt;/p&gt;
+&lt;pre class="literal-block"&gt;
+$ objdump -R main
+
+main:     file format elf64-x86-64
+
+DYNAMIC RELOCATION RECORDS
+OFFSET           TYPE              VALUE
+0000000000600ff8 R_X86_64_GLOB_DAT  __gmon_start__
+0000000000601050 R_X86_64_64       foo
+0000000000601018 R_X86_64_JUMP_SLOT  printf
+0000000000601020 R_X86_64_JUMP_SLOT  __libc_start_main
+0000000000601028 R_X86_64_JUMP_SLOT  __gmon_start__
+&lt;/pre&gt;
+&lt;p&gt;This record indicates that the address of &lt;tt class="docutils literal"&gt;foo&lt;/tt&gt;, once known by the loader,
+should be filled in at the offset &lt;tt class="docutils literal"&gt;0x00601050&lt;/tt&gt;, which just as before
+happens to the location of &lt;tt class="docutils literal"&gt;bar&lt;/tt&gt; within the &lt;tt class="docutils literal"&gt;.data&lt;/tt&gt; section of the
+image.  We can confirm this running the program under gdb:&lt;/p&gt;
+&lt;pre class="literal-block"&gt;
+(gdb) x/g 0x00601050
+0x601050 &amp;lt;bar&amp;gt;: 0x00007ffff7dd9030
+(gdb) x/w 0x00007ffff7dd9030
+0x7ffff7dd9030 &amp;lt;foo&amp;gt;:   0x55555555
+&lt;/pre&gt;
+&lt;p&gt;We can see that because the loader allows relocations in the &lt;tt class="docutils literal"&gt;.data&lt;/tt&gt;
+section, because this all happens before the program begins running, from
+the program's perspective &lt;tt class="docutils literal"&gt;bar&lt;/tt&gt; is correctly initialized at start-up as
+required, even though &lt;tt class="docutils literal"&gt;foo&lt;/tt&gt; happens to be in a shared library.&lt;/p&gt;
+&lt;p&gt;This works because the ELF binary loader allows for dynamic relocations just
+about as sophisticated as at link time.  Unfortunately, this is not so on
+Windows.  The way PE/COFF files work, and hence the way Windows' dynamic
+loader works, is that there exists an Import Address Table (IAT), explained
+&lt;a class="reference external" href="https://msdn.microsoft.com/en-us/magazine/bb985992.aspx"&gt;here&lt;/a&gt; among a
+few other resources.  The table contains just one entry for each &amp;quot;imported&amp;quot;
+object (functions and data declared with &lt;tt class="docutils literal"&gt;__declspec(dllimport)&lt;/tt&gt;.  At
+runtime this table is filled in with the addresses of each symbol as the
+DLLs they live in are loaded.  You can also see, in the assembly, that
+references to the symbol &lt;tt class="docutils literal"&gt;foo&lt;/tt&gt; are replaced in the source with
+&lt;tt class="docutils literal"&gt;__imp_foo&lt;/tt&gt;, where &lt;tt class="docutils literal"&gt;__imp_foo&lt;/tt&gt; refers to the IAT entry for &lt;tt class="docutils literal"&gt;foo&lt;/tt&gt;.&lt;/p&gt;
+&lt;p&gt;To demonstrate this, first we need to write some code that can actually be
+compiled on Windows.  The workaround to this entire problem is, fortunately,
+reasonably simple--just replace the &lt;tt class="docutils literal"&gt;&amp;amp;foo&lt;/tt&gt; with &lt;tt class="docutils literal"&gt;NULL&lt;/tt&gt;, and finish
+initializing &lt;tt class="docutils literal"&gt;bar&lt;/tt&gt; at runtime:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="k"&gt;static&lt;/span&gt; &lt;span class="n"&gt;mystruct&lt;/span&gt; &lt;span class="n"&gt;bar&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="nb"&gt;NULL&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+    &lt;span class="mi"&gt;0&lt;/span&gt;
+&lt;span class="p"&gt;};&lt;/span&gt;
+
+
+&lt;span class="kt"&gt;int&lt;/span&gt; &lt;span class="nf"&gt;main&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="kt"&gt;void&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;bar&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="nb"&gt;NULL&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="n"&gt;bar&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;foo&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+
+    &lt;span class="n"&gt;printf&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;&amp;quot;bar.a: %p&lt;/span&gt;&lt;span class="se"&gt;\n&lt;/span&gt;&lt;span class="s"&gt;bar.b: %d&lt;/span&gt;&lt;span class="se"&gt;\n&lt;/span&gt;&lt;span class="s"&gt;&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;bar&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;bar&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Looking at the assembly with &lt;tt class="docutils literal"&gt;objdump &lt;span class="pre"&gt;-dzr&lt;/span&gt; main.o&lt;/tt&gt; shows:&lt;/p&gt;
+&lt;pre class="literal-block"&gt;
+0000000000000000 &amp;lt;main&amp;gt;:
+   0:   55                      push   %rbp
+   1:   48 89 e5                mov    %rsp,%rbp
+   4:   48 83 ec 20             sub    $0x20,%rsp
+   8:   e8 00 00 00 00          callq  d &amp;lt;main+0xd&amp;gt;
+                        9: R_X86_64_PC32        __main
+   d:   48 8b 05 00 00 00 00    mov    0x0(%rip),%rax        # 14 &amp;lt;main+0x14&amp;gt;
+                        10: R_X86_64_PC32       .bss
+  14:   48 85 c0                test   %rax,%rax
+  17:   75 0e                   jne    27 &amp;lt;main+0x27&amp;gt;
+  19:   48 8b 05 00 00 00 00    mov    0x0(%rip),%rax        # 20 &amp;lt;main+0x20&amp;gt;
+                        1c: R_X86_64_PC32       __imp_foo
+  20:   48 89 05 00 00 00 00    mov    %rax,0x0(%rip)        # 27 &amp;lt;main+0x27&amp;gt;
+                        23: R_X86_64_PC32       .bss
+  27:   8b 15 08 00 00 00       mov    0x8(%rip),%edx        # 35 &amp;lt;main+0x35&amp;gt;
+                        29: R_X86_64_PC32       .bss
+  2d:   48 8b 05 00 00 00 00    mov    0x0(%rip),%rax        # 34 &amp;lt;main+0x34&amp;gt;
+                        30: R_X86_64_PC32       .bss
+  34:   41 89 d0                mov    %edx,%r8d
+  37:   48 89 c2                mov    %rax,%rdx
+  3a:   48 8d 0d 00 00 00 00    lea    0x0(%rip),%rcx        # 41 &amp;lt;main+0x41&amp;gt;
+                        3d: R_X86_64_PC32       .rdata
+  41:   e8 00 00 00 00          callq  46 &amp;lt;main+0x46&amp;gt;
+                        42: R_X86_64_PC32       printf
+  46:   b8 00 00 00 00          mov    $0x0,%eax
+  4b:   48 83 c4 20             add    $0x20,%rsp
+  4f:   5d                      pop    %rbp
+  50:   c3                      retq
+&lt;/pre&gt;
+&lt;p&gt;The important bit is the instruction at offset &lt;tt class="docutils literal"&gt;0x19&lt;/tt&gt;.  Here we can see
+there's an IP-relative (as this is 64-bit Windows) load from some address
+for which we have a relocation for the symbol &lt;tt class="docutils literal"&gt;__imp_foo&lt;/tt&gt; (&lt;em&gt;not&lt;/em&gt; just
+&lt;tt class="docutils literal"&gt;foo&lt;/tt&gt;).  We can see that &lt;tt class="docutils literal"&gt;bar&lt;/tt&gt;, now being uninitialized, is in &lt;tt class="docutils literal"&gt;.bss&lt;/tt&gt;
+instead of &lt;tt class="docutils literal"&gt;.data&lt;/tt&gt;, but &lt;tt class="docutils literal"&gt;__imp_foo&lt;/tt&gt; is somewhere else--but where?&lt;/p&gt;
+&lt;p&gt;Well we already said, &lt;tt class="docutils literal"&gt;__imp_foo&lt;/tt&gt; is actually a reference to the IAT,
+which lives in a different segment.  Again, we can see this especially
+easily at runtime.  I noticed while playing around with this that there are
+special symbols named &lt;tt class="docutils literal"&gt;__IAT_start__&lt;/tt&gt; and &lt;tt class="docutils literal"&gt;__IAT_end__&lt;/tt&gt; specifying
+exactly where the IAT is in memory, and sure enough we can see that's where
+&lt;tt class="docutils literal"&gt;__imp_foo&lt;/tt&gt; is:&lt;/p&gt;
+&lt;pre class="literal-block"&gt;
+(gdb) info addr __imp_foo
+Symbol &amp;quot;__imp_foo&amp;quot; is at 0x100408170 in a file compiled without debugging.
+(gdb) info addr __IAT_start__
+Symbol &amp;quot;__IAT_start__&amp;quot; is at 0x1004080e8 in a file compiled without debugging.
+(gdb) info addr __IAT_end__
+Symbol &amp;quot;__IAT_end__&amp;quot; is at 0x100408180 in a file compiled without debugging.
+&lt;/pre&gt;
+&lt;p&gt;&lt;tt class="docutils literal"&gt;__imp_foo&lt;/tt&gt; is at a fixed address relative to code that references it, so
+the linker easily fixes up &lt;em&gt;those&lt;/em&gt; relocations.  But because the IAT is
+otherwise the only place where the loader fills the address of &lt;tt class="docutils literal"&gt;foo&lt;/tt&gt; at
+runtime, the loader cannot initialize static data with the address of
+&lt;tt class="docutils literal"&gt;foo&lt;/tt&gt;.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="conclusion"&gt;
+&lt;h2&gt;Conclusion&lt;/h2&gt;
+&lt;p&gt;TL;DR when loading Windows binaries we can't perform relocations in the
+&lt;tt class="docutils literal"&gt;.data&lt;/tt&gt; section, so it's actually impossible to initialize objects with
+static storage duration with data from an external DLL.  Initialization of
+objects such as &lt;tt class="docutils literal"&gt;bar&lt;/tt&gt; have to be completed after the fact at runtime and
+there's just no good way around it.&lt;/p&gt;
+&lt;p&gt;Fortunately, both GCC and MSVC are smart enough to know that this will be
+the case for variables declared with &lt;tt class="docutils literal"&gt;__declspec(dllimport)&lt;/tt&gt;.  It knows
+that &lt;tt class="docutils literal"&gt;foo&lt;/tt&gt;--specifically &lt;tt class="docutils literal"&gt;__imp_foo&lt;/tt&gt;--effectively does not have static
+storage duration, so its address cannot be used to initialize a struct.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="bonus-why-does-it-work-for-functions-but-not-data"&gt;
+&lt;h2&gt;Bonus: Why does it work for functions but not data?&lt;/h2&gt;
+&lt;p&gt;What if we took the original code, and changed the declaration of &lt;tt class="docutils literal"&gt;foo&lt;/tt&gt;
+to a function, like:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="n"&gt;DATA&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="kt"&gt;int&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="n"&gt;foo&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="kt"&gt;void&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;(ignoring the fact that the &lt;tt class="docutils literal"&gt;DATA&lt;/tt&gt; macro is now a misnomer; it still has
+the same effect) and also update the definition of &lt;tt class="docutils literal"&gt;mystruct&lt;/tt&gt; so that the
+&lt;tt class="docutils literal"&gt;mystruct.a&lt;/tt&gt; member is a function pointer:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="k"&gt;typedef&lt;/span&gt; &lt;span class="k"&gt;struct&lt;/span&gt; &lt;span class="n"&gt;_mystruct&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="kt"&gt;int&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;)();&lt;/span&gt;
+    &lt;span class="kt"&gt;int&lt;/span&gt; &lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt; &lt;span class="n"&gt;mystruct&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Now recompile &lt;tt class="docutils literal"&gt;main.c&lt;/tt&gt; and it works, even on Windows!  We can also see
+that the relevant assembly (which reads from &lt;tt class="docutils literal"&gt;bar.a&lt;/tt&gt; in order to pass it
+to &lt;tt class="docutils literal"&gt;printf&lt;/tt&gt;) shows:&lt;/p&gt;
+&lt;pre class="literal-block"&gt;
+2d:   48 8b 05 00 00 00 00    mov    0x0(%rip),%rax        # 34 &amp;lt;main+0x34&amp;gt;
+                      30: R_X86_64_PC32       .data
+&lt;/pre&gt;
+&lt;p&gt;So the object file actually references a relocation in &lt;tt class="docutils literal"&gt;.data&lt;/tt&gt; (just as it
+did on Linux when &lt;tt class="docutils literal"&gt;foo&lt;/tt&gt; was a mere &lt;tt class="docutils literal"&gt;int&lt;/tt&gt;):&lt;/p&gt;
+&lt;pre class="literal-block"&gt;
+$ objdump -r -j .data main.o
+
+main.o:     file format pe-x86-64
+
+RELOCATION RECORDS FOR [.data]:
+OFFSET           TYPE              VALUE
+0000000000000000 R_X86_64_64       foo
+&lt;/pre&gt;
+&lt;p&gt;No reference here to &lt;tt class="docutils literal"&gt;__imp_foo&lt;/tt&gt;.&lt;/p&gt;
+&lt;p&gt;At risk of vastly oversimplifying, for historical (?) reasons Windows
+binaries contain symbols for all the function used in that particular
+binary, even if they are imported from an external DLL.  Normally, when we
+link an executable that uses code from a DLL, we pass the linker an &amp;quot;import
+library&amp;quot; which contains stub definitions for all the functions in the
+related DLL.  The stub function, which is included in the executable,
+contains just a &lt;tt class="docutils literal"&gt;jmp&lt;/tt&gt; to &lt;tt class="docutils literal"&gt;__imp_foo&lt;/tt&gt;.  And in fact, when we declare a
+function with &lt;tt class="docutils literal"&gt;__declspec(dllimport)&lt;/tt&gt;, this allows the compiler to bypass
+generating code like &lt;tt class="docutils literal"&gt;call foo&lt;/tt&gt;, and go straight to &lt;tt class="docutils literal"&gt;call __imp_foo&lt;/tt&gt;,
+bypassing the stub function altogether.  But the stub function nevertheless
+still exists.&lt;/p&gt;
+&lt;p&gt;In fact, we can see in the linked executable exactly what winds up in the
+&lt;tt class="docutils literal"&gt;.data&lt;/tt&gt; section:&lt;/p&gt;
+&lt;pre class="literal-block"&gt;
+main:     file format pei-x86-64
+
+Contents of section .data:
+ 100402000 00000000 00000000 00000000 00000000  ................
+ 100402010 40114000 01000000 00000000 00000000  &amp;#64;.&amp;#64;.............
+ 100402020 00000000 00000000 00000000 00000000  ................
+ 100402030 00000000 00000000 00000000 00000000  ................
+ 100402040 00000000 00000000 00000000 00000000  ................
+ 100402050 00000000 00000000 00000000 00000000  ................
+ 100402060 00000000 00000000                    ........
+&lt;/pre&gt;
+&lt;p&gt;Although not immediately obvious, the value &lt;tt class="docutils literal"&gt;0x010041140&lt;/tt&gt; at offset
+&lt;tt class="docutils literal"&gt;0x100402010&lt;/tt&gt; is the address of the &lt;em&gt;stub function&lt;/em&gt; for &lt;tt class="docutils literal"&gt;bar&lt;/tt&gt;.  From the
+section headings we can see the offset off the &lt;tt class="docutils literal"&gt;.text&lt;/tt&gt; section is at
+&lt;tt class="docutils literal"&gt;0x100401000&lt;/tt&gt;:&lt;/p&gt;
+&lt;pre class="literal-block"&gt;
+Sections:
+Idx Name          Size      VMA               LMA               File off  Algn
+  0 .text         000007c8  0000000100401000  0000000100401000  00000600  2**4
+                  CONTENTS, ALLOC, LOAD, READONLY, CODE, DATA
+&lt;/pre&gt;
+&lt;p&gt;And the symbol table shows the stub function at:&lt;/p&gt;
+&lt;pre class="literal-block"&gt;
+[673](sec  1)(fl 0x00)(ty  20)(scl   2) (nx 0) 0x0000000000000140 foo
+&lt;/pre&gt;
+&lt;p&gt;Add them together and you get &lt;tt class="docutils literal"&gt;0x0100401140&lt;/tt&gt;.  So what we see is that
+&lt;tt class="docutils literal"&gt;bar&lt;/tt&gt; is initialized &lt;strong&gt;not&lt;/strong&gt; with the actual address of the &lt;tt class="docutils literal"&gt;foo&lt;/tt&gt;
+function, but with the address of its &lt;em&gt;stub function&lt;/em&gt;.  This is assumed to
+be good enough since the calling &lt;tt class="docutils literal"&gt;foo.a&lt;/tt&gt; as a function will still
+ultimately jump to the real function, and should work fine for most other
+purposes as well, but it could be a little surprising and misleading,
+especially while debugging.&lt;/p&gt;
+&lt;/div&gt;
+</summary><category term="c"></category><category term="windows"></category><category term="dlls"></category><category term="compilers"></category><category term="debugging"></category></entry><entry><title>On Python, Polynomials, and Parsers (part 1)</title><link href="https://iguananaut.net/blog/programming/python-polynomials-parsers-1.html" rel="alternate"></link><published>2016-09-02T00:00:00+02:00</published><author><name>Erik M. Bray</name></author><id>tag:iguananaut.net,2016-09-02:blog/programming/python-polynomials-parsers-1.html</id><summary type="html">&lt;div class="note"&gt;
+&lt;p class="first admonition-title"&gt;Note&lt;/p&gt;
+&lt;p class="last"&gt;Most of this series doesn't really have anything to do with parsers per se,
+and more do with analysis of abstract syntax trees (ASTs) which are the output
+of a parser.  I just couldn't resist the alliteration.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="the-initial-problem"&gt;
+&lt;h2&gt;The initial problem&lt;/h2&gt;
+&lt;p&gt;One of my current major tasks to is port the &lt;a class="reference external" href="http://www.sagemath.org/"&gt;SageMath&lt;/a&gt; mathematical software toolkit to work on Windows.
+This turns out to be a surprisingly challenging task—SageMath has a large
+number of dependencies, some of which make platform-specific assumptions and
+don't support Windows. Currently I am dependent on Cygwin for this—I hope to
+break away from Cygwin dependence eventually, but that's beside the point.&lt;/p&gt;
+&lt;p&gt;While running Sage's massive test suite of tens of thousands of tests, I
+encountered one test—which involves computing someting I don't understand about
+isogenies of &lt;a class="reference external" href="https://en.wikipedia.org/wiki/Elliptic_curve"&gt;elliptic curves&lt;/a&gt;
+—which was resulting in a segmentation fault (only on Windows). I am not a
+mathematician, and do not understand the majority of the math in SageMath (and
+neither do the mathematicians who work on it—it's too huge for any one person
+to understand all of). In particular, while I've used Sage solve some basic
+analytical problems, most of its complex hierarchies of algebraic objects and
+operations thereon are beyond me. I know what an elliptic curve is but I don't
+know much about what you do with them. So a segfault deep in some calculation
+about a property of an elliptic curve was a bit intimidating.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="section" id="debugging"&gt;
+&lt;h2&gt;Debugging&lt;/h2&gt;
+&lt;p&gt;The good news was being a platform-specific segfault there was a chance the
+problem had nothing to do with details of the calculation itself, and that
+suspicion bore out. As usual when there's a bug in Python, I started by
+stepping through the failing test with &lt;a class="reference external" href="https://docs.python.org/3/library/pdb.html"&gt;pdb&lt;/a&gt;. This led me into a function
+called &lt;a class="reference external" href="https://git.sagemath.org/sage.git/tree/src/sage/schemes/elliptic_curves/isogeny_small_degree.py?id=00722fdd62ec1eea787ae97eec986888cd2d9601#n1446"&gt;Psi2&lt;/a&gt;,
+which was being called with an input of 71. It tured out to be the last line of
+this function that was causing the segfault. SO I was able to isolate the
+problem to this function:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&amp;gt;&amp;gt;&lt;/span&gt; &lt;span class="kn"&gt;from&lt;/span&gt; &lt;span class="nn"&gt;sage.schemes.elliptic_curves.isogeny_small_degree&lt;/span&gt; &lt;span class="kn"&gt;import&lt;/span&gt; &lt;span class="n"&gt;Psi2&lt;/span&gt;
+&lt;span class="o"&gt;&amp;gt;&amp;gt;&amp;gt;&lt;/span&gt; &lt;span class="n"&gt;Psi2&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;71&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="n"&gt;Segmentation&lt;/span&gt; &lt;span class="n"&gt;fault&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;core&lt;/span&gt; &lt;span class="n"&gt;dumped&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+&lt;p&gt;Because large swaths of Sage are written in &lt;a class="reference external" href="http://cython.org/"&gt;Cython&lt;/a&gt;, the
+Python debugger is not particularly useful beyond this point. And in any case
+because we're getting a segmentation fault, the problem has to be below the
+Python level anyways. I was mostly expecting the problem to be in one of Sage's
+many dependencies, such as the &lt;a class="reference external" href="https://www.singular.uni-kl.de/"&gt;Singular&lt;/a&gt;
+system, which is used for many computations about polynomials. So the next step
+is to put the failing code in a short script, and run Python through gdb, which
+can catch the segmentation fault and provide a C-level traceback:&lt;/p&gt;
+&lt;pre class="literal-block"&gt;
+(gdb) run Psi2.py
+... various noise, like new threads spawning (Cygwin uses lots of threads to implement things like signal handling) ...
+Program received signal SIGSEGV, Segmentation fault.
+0x00000003f42f32ad in symtable_visit_expr () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+&lt;/pre&gt;
+&lt;p&gt;Huh! That was not what I was expecting—a segfault somewhere in the bowels of
+the Python interpreter itself. Not that it's the first time I've ever found a
+segfault in the Python interpreter, but not what I was expecting for this code.
+I wasn't using a debug build of Python, so I don't get much in the way of
+debugging info other than the function name. But let's look at the rest of the
+backtrace to see if we can tell something more:&lt;/p&gt;
+&lt;pre class="literal-block"&gt;
+(gdb) bt
+#0  0x00000003f42f32ad in symtable_visit_expr () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#1  0x00000003f42f32b2 in symtable_visit_expr () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#2  0x00000003f42f32b2 in symtable_visit_expr () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#3  0x00000003f42f32b2 in symtable_visit_expr () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#4  0x00000003f42f32b2 in symtable_visit_expr () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#5  0x00000003f42f32b2 in symtable_visit_expr () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#6  0x00000003f42f32b2 in symtable_visit_expr () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#7  0x00000003f42f32b2 in symtable_visit_expr () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#8  0x00000003f42f32b2 in symtable_visit_expr () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#9  0x00000003f42f32b2 in symtable_visit_expr () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#10 0x00000003f42f32b2 in symtable_visit_expr () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+...
+&lt;/pre&gt;
+&lt;p&gt;... and so on for another 40 lines. Yikes! Looks like a recursion bug. In fact:&lt;/p&gt;
+&lt;pre class="literal-block"&gt;
+(gdb) bt -10
+#7174 0x00000003f42bbec8 in call_function () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#7175 0x00000003f42b66c7 in PyEval_EvalFrameEx () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#7176 0x00000003f42b9158 in PyEval_EvalCodeEx () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#7177 0x00000003f42aee74 in PyEval_EvalCode () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#7178 0x00000003f42ebf6a in run_mod () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#7179 0x00000003f42ebeee in PyRun_FileExFlags () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#7180 0x00000003f42ea5bd in PyRun_SimpleFileExFlags () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#7181 0x00000003f42e9bcb in PyRun_AnyFileExFlags () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#7182 0x00000003f43062bc in Py_Main () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#7183 0x0000000100401103 in main (argc=2, argv=0xffffcc00) at ./Modules/python.c:23
+&lt;/pre&gt;
+&lt;p&gt;A good 7000+ stack frames worth of recursion. The reason for the segfault is
+clear then —a good ol' stack overflow!&lt;/p&gt;
+&lt;p&gt;This also explains why this test failed on Windows, but not other platforms
+(most Sage developers are using some *nix variant). Programs run with a default
+limit on their stack size, usually provided by the operating system. On most
+Linux systems, for example, this is 8 MB. On Windows the the OS is still
+responsible for reserving the stack, but executables can actually have their
+requested stack size compiled into them at link time. By default (at least in
+Cygwin's GCC) this is just 1 MB. So clearly this could fail just as well on
+Linux with a smaller stack—and indeed when I tried setting:&lt;/p&gt;
+&lt;pre class="literal-block"&gt;
+$ ulimit -s 1024
+&lt;/pre&gt;
+&lt;p&gt;to set my stack limit to 1 MB, I got the same crash on Linux.&lt;/p&gt;
+&lt;p&gt;In the next post I'll explain in a little more detail what the problematic code
+in Sage is doing, and why it's crashing Python somewhere in its symbol table
+analysis. Then I'll write a post exploring this particular corner of the
+CPython interpeter. While I've spent a good amount of time in CPython's code,
+the compiler is one area where I had previously spent very little time, so it
+was an interesting learning experience.&lt;/p&gt;
+&lt;/div&gt;
+</summary><category term="python"></category><category term="sage"></category><category term="debugging"></category></entry><entry><title>Where I've Been</title><link href="https://iguananaut.net/blog/personal/where-ive-been.html" rel="alternate"></link><published>2016-07-12T00:00:00+02:00</published><author><name>Erik M. Bray</name></author><id>tag:iguananaut.net,2015-01-15:blog/personal/where-ive-been.html</id><summary type="html">&lt;p&gt;I don't recall exactly what motivated me, but I was looking up something in my
+blog the other day and it occurred to me that it has been just over a year
+since I last updated it.&lt;/p&gt;
+&lt;p&gt;To be quite honestly one of the main reasons, or at least excuses, has been
+pure vanity. I'm still not overly fond of the layout and fonts for the site. So
+every time I thought of writing something I thought my first effort should be
+in making some of those superficial improvements first; but then I convince
+myself (rightfully) that I have better things to do with my time than to spend
+hours fiddling with CSS and fonts.&lt;/p&gt;
+&lt;p&gt;That said, it's a poor excuse. I have since made a few improvements, and though
+I'm still not happy with it I don't want to use that excuse any longer. But I
+have had other better excuses as well.&lt;/p&gt;
+&lt;p&gt;I spent most of my free time in the spring semester of 2014 working on an
+independent project for my master's degree that I named
+&lt;a class="reference external" href="https://bitbucket.org/embray/pyqc"&gt;PyQC&lt;/a&gt; (not to be confused with an ESO
+project apparently called pyQC—I'm pretty confident I had the name first
+though). This started as a project for my Quantum Information class, but there
+were still many possibilities for further development once the class was over,
+hence the independent project. I worked on this a bit into the summer as well,
+just on my own time. But since then it had languished, which I feel awful
+about. Though I did give a (last minute) lightning talk about it at the last
+SciPy: &lt;a class="reference external" href="http://youtu.be/SMyto7WHiNs?t=18m45s"&gt;http://youtu.be/SMyto7WHiNs?t=18m45s&lt;/a&gt; (also check out Tracy Teal's
+announcement of &lt;a class="reference external" href="http://datacarpentry.org"&gt;Data Carpentry&lt;/a&gt; right before me in
+the same video). I think my talk was largely incomprehensible, but it did
+garner some interest. I had a number of people coming up to me later asking
+things like &amp;quot;Hey, are you the quantum computer guy?&amp;quot; giving me an opportunity
+to practice explaining quantum algorithms.&lt;/p&gt;
+&lt;p&gt;Another task that occupied much of my summer was helping a friend in political
+science get the numbers crunched for his PhD thesis. It started out just
+manipulating a couple CSV files, but grew far more involved. I love this
+friend, but computing is not their strong suit, and so much time was spent on
+hand-holding. I tried to impart some Software Carpentry lessons, but they were
+too panicked about just getting the thing done to really listen. Things got
+even crazier when we had to handle the Japanese data, much of which needed to
+be translated to English before it could be meaningfully compared to the other
+data. It was a lot of work (still vastly more for my friend than for me) but I
+thought it was an interesting project and we'll worth the effort. I might have
+to write something more about it later.&lt;/p&gt;
+&lt;p&gt;Meanwhile at my day job a significant amount of my effort was spent on the new
+&lt;a class="reference external" href="http://docs.astropy.org/en/latest/modeling/index.html#compound-models"&gt;compound
+model&lt;/a&gt;
+framework for Astropy.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Update:&lt;/strong&gt; I actually started a draft of this post over a year ago and
+never got around to posting a final draft.  For my own recollection though
+I'm leaving this post up as-is.&lt;/p&gt;
+</summary><category term="school"></category><category term="life"></category><category term="projects"></category></entry><entry><title>Analyzing Git Repositories in Pandas</title><link href="https://iguananaut.net/blog/programming/git-logs-in-pandas.html" rel="alternate"></link><published>2014-01-03T00:00:00+01:00</published><author><name>Erik M. Bray</name></author><id>tag:iguananaut.net,2014-01-03:blog/programming/git-logs-in-pandas.html</id><summary type="html">&lt;p&gt;Although the git log command is extremely powerful for use in exploring a git
+repository's history, I found that for some kinds of analysis it may be easier
+to dump git log output into a Pandas DataFrame and work with it in Python.&lt;/p&gt;
+&lt;p&gt;In particular what motivated this was that I was trying to recreate the graph
+of commit activity over time that GitHub shows on its &amp;quot;Contributors&amp;quot; graph
+page.  For a large project &lt;a class="reference external" href="https://github.com/astropy/astropy/graphs/contributors"&gt;like Astropy&lt;/a&gt; that looks something
+like this:&lt;/p&gt;
+&lt;img alt="Astropy commit activity over time" class="align-center" src="https://iguananaut.net/static/images/git-logs-in-pandas/github-astropy-commits-graph.png" /&gt;
+&lt;p&gt;This graph is nice enough on its own for use in a web browser, but I wanted to
+make my own replication of it using matplotlib for my own use.  There do exist
+a number of software packages already that will generate statistics and plots
+from git repositories.  I would link to some, but honestly I didn't bother even
+trying any of them since the plots they made were damned ugly.  I figured I
+only had a few limited use cases I was interested in so it would be easier to
+do myself and probably look a little better.&lt;/p&gt;
+&lt;p&gt;My first attempt actually did take advantage of Pandas from the start.  This
+was the first time I had really attempted to do much with Pandas for my own
+use (aside from working on small tutorials to give to other people).  So one
+thing I did know was that I was working with a time series and that Pandas
+might include some tools that would make my life easier.  That said I am still
+learning Pandas myself, and some of my solutions may be ugly and hacky.&lt;/p&gt;
+&lt;p&gt;I assumed, to start with, that I would sample the commit activity on a weekly
+basis rather than daily.  &lt;tt class="docutils literal"&gt;git log&lt;/tt&gt; supports &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;--since&lt;/span&gt;&lt;/tt&gt; and &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;--until&lt;/span&gt;&lt;/tt&gt;
+arguments that allow returning a sample of the log in a specific date range.
+But I needed a quick, easy way to generate a list of dates separated by one
+week.  I could have done this easily enough in pure Python using timedeltas,
+but since I already had Pandas installed my first attempt used its built-in
+&lt;tt class="docutils literal"&gt;date_range&lt;/tt&gt; function:&lt;/p&gt;
+&lt;pre class="code python literal-block"&gt;
+&lt;span class="o"&gt;&amp;gt;&amp;gt;&amp;gt;&lt;/span&gt; &lt;span class="kn"&gt;from&lt;/span&gt; &lt;span class="nn"&gt;pandas&lt;/span&gt; &lt;span class="kn"&gt;import&lt;/span&gt; &lt;span class="n"&gt;date_range&lt;/span&gt;
+&lt;span class="o"&gt;&amp;gt;&amp;gt;&amp;gt;&lt;/span&gt; &lt;span class="kn"&gt;from&lt;/span&gt; &lt;span class="nn"&gt;pandas&lt;/span&gt;
+&lt;span class="o"&gt;&amp;gt;&amp;gt;&amp;gt;&lt;/span&gt; &lt;span class="n"&gt;date_range&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s1"&gt;'2011-07-25'&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s1"&gt;'2014-01-03'&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;freq&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="s1"&gt;'W'&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="k"&gt;class&lt;/span&gt; &lt;span class="err"&gt;'&lt;/span&gt;&lt;span class="nc"&gt;pandas&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;tseries&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;index&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;DatetimeIndex&lt;/span&gt;&lt;span class="s1"&gt;'&amp;gt;&lt;/span&gt;
+&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;2011&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mo"&gt;07&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;31&lt;/span&gt; &lt;span class="mo"&gt;00&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="mo"&gt;00&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="mo"&gt;00&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="o"&gt;...&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="mi"&gt;2013&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;12&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;29&lt;/span&gt; &lt;span class="mo"&gt;00&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="mo"&gt;00&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="mo"&gt;00&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
+&lt;span class="n"&gt;Length&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="mi"&gt;77&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;Freq&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="n"&gt;W&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="n"&gt;SUN&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;Timezone&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="bp"&gt;None&lt;/span&gt;
+&lt;/pre&gt;
+&lt;p&gt;As you can see, a &amp;quot;gotcha&amp;quot; in Pandas is that the &lt;tt class="docutils literal"&gt;'W'&lt;/tt&gt; frequency for week
+actually defaults to weeks beginning on Sunday.  A reasonable default, to be
+sure, but this cuts off dates in my range before the first Sunday in the range.
+There are a few possible workarounds for this, but for my case I just shifted
+the start day to the first Sunday before the actual start day.  There is a
+better way I later discovered to do this using the &lt;tt class="docutils literal"&gt;period_range&lt;/tt&gt; function
+but I will leave that as an exercise.&lt;/p&gt;
+&lt;p&gt;My full solution involved looping over the dates in my date range and making
+repeated calls to &lt;tt class="docutils literal"&gt;git log&lt;/tt&gt;, a process with really more overhead than
+necessary but it was fine for a first attempt:&lt;/p&gt;
+&lt;pre class="code python literal-block"&gt;
+&lt;span class="kn"&gt;from&lt;/span&gt; &lt;span class="nn"&gt;datetime&lt;/span&gt; &lt;span class="kn"&gt;import&lt;/span&gt; &lt;span class="n"&gt;datetime&lt;/span&gt;
+&lt;span class="kn"&gt;from&lt;/span&gt; &lt;span class="nn"&gt;pandas&lt;/span&gt; &lt;span class="kn"&gt;import&lt;/span&gt; &lt;span class="n"&gt;date_range&lt;/span&gt;
+&lt;span class="kn"&gt;import&lt;/span&gt; &lt;span class="nn"&gt;shlex&lt;/span&gt;
+&lt;span class="kn"&gt;import&lt;/span&gt; &lt;span class="nn"&gt;subprocess&lt;/span&gt; &lt;span class="kn"&gt;as&lt;/span&gt; &lt;span class="nn"&gt;sp&lt;/span&gt;
+
+&lt;span class="c1"&gt;# I just looked up and hard-coded the start date of the repository in&lt;/span&gt;
+&lt;span class="c1"&gt;# this version&lt;/span&gt;
+&lt;span class="n"&gt;start&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;datetime&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;year&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;2011&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;month&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;7&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;day&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;24&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="n"&gt;end&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;datetime&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;today&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+&lt;span class="n"&gt;rng&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;date_range&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;start&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;end&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;freq&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="s1"&gt;'W'&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+&lt;span class="c1"&gt;# This will list each commit in the given range on one line each (excluding&lt;/span&gt;
+&lt;span class="c1"&gt;# merge commits).  This means I can count commits by simply counting lines&lt;/span&gt;
+&lt;span class="c1"&gt;# of output&lt;/span&gt;
+&lt;span class="n"&gt;cmd&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s1"&gt;'git log --oneline --since=&lt;/span&gt;&lt;span class="si"&gt;%s&lt;/span&gt;&lt;span class="s1"&gt; --until=&lt;/span&gt;&lt;span class="si"&gt;%s&lt;/span&gt;&lt;span class="s1"&gt; --no-merges'&lt;/span&gt;
+
+&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;count_commits&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;since&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;until&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+    &lt;span class="n"&gt;p&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;sp&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Popen&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;shlex&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;split&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cmd&lt;/span&gt; &lt;span class="o"&gt;%&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;since&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;until&lt;/span&gt;&lt;span class="p"&gt;)),&lt;/span&gt; &lt;span class="n"&gt;stdout&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;sp&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;PIPE&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="n"&gt;p&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;wait&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="nb"&gt;len&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;p&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;stdout&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;readlines&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt;
+
+&lt;span class="n"&gt;commits_by_week&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[]&lt;/span&gt;
+&lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;idx&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="nb"&gt;xrange&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;len&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;rng&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt; &lt;span class="o"&gt;-&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+    &lt;span class="n"&gt;since&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;rng&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;idx&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
+    &lt;span class="n"&gt;since_iso&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;since&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;date&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;isoformat&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+    &lt;span class="n"&gt;until_iso&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;rng&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;idx&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;date&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;isoformat&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+    &lt;span class="n"&gt;commits_by_week&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;append&lt;/span&gt;&lt;span class="p"&gt;((&lt;/span&gt;&lt;span class="n"&gt;since&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;count_commits&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;since_iso&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;until_iso&lt;/span&gt;&lt;span class="p"&gt;)))&lt;/span&gt;
+
+&lt;span class="c1"&gt;# Special case for the last week in the range&lt;/span&gt;
+&lt;span class="n"&gt;since&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;rng&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
+&lt;span class="n"&gt;since_iso&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;since&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;date&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;isoformat&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+&lt;span class="n"&gt;until_iso&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;end&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;isoformat&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+&lt;span class="n"&gt;commits_by_week&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;append&lt;/span&gt;&lt;span class="p"&gt;((&lt;/span&gt;&lt;span class="n"&gt;since&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;count_commits&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;since_iso&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;until_iso&lt;/span&gt;&lt;span class="p"&gt;)))&lt;/span&gt;
+&lt;/pre&gt;
+&lt;p&gt;I plopped this script directly into my git repository and ran it.  I've
+ommitted that version of the plotting code, but it came out with something
+like this (after taking a rather long time to make all those &lt;tt class="docutils literal"&gt;git log&lt;/tt&gt;
+calls):&lt;/p&gt;
+&lt;img alt="First attempt at a commit activity graph" class="align-center" src="https://iguananaut.net/static/images/git-logs-in-pandas/first-attempt.png" /&gt;
+&lt;p&gt;If you compare that to the version from GitHub you can see that while there
+are similar periods of activity and inactivity, the two plots look rather
+different.  In particular, my version has several large spikes that are
+absent from the GitHub version.  At first I thought I might try sampling by
+day instead of week, but that only made the output even spikier, and all those
+&lt;tt class="docutils literal"&gt;git log&lt;/tt&gt; calls were taking inordinately long.&lt;/p&gt;
+&lt;p&gt;After just a little further exploration of the GitHub graphs and comparison
+with my actual git log I realized the major difference:  GitHub's time series
+is using the &amp;quot;author date&amp;quot; of the commits rather than the &amp;quot;committer date&amp;quot; to
+produce its graph.  All git commits actually carry (at least) two dates.  As
+&lt;a class="reference external" href="http://alexpeattie.com/blog/working-with-dates-in-git/"&gt;this article&lt;/a&gt; by
+Alex Peattie explains, the &amp;quot;author is the person who originally wrote the work,
+whereas the committer is the person who last applied the work.&amp;quot;  And further,
+&lt;tt class="docutils literal"&gt;git log&lt;/tt&gt; &amp;quot;uses commit dates when given a &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;--since&lt;/span&gt;&lt;/tt&gt; option.&amp;quot;  So my time
+series was based on commit dates, rather than author dates.  That largely
+explains the big spikes—it turns out they largely correspond to activity just
+before making a release of Astropy, when many pull requests were being merged.
+When the PRs are merged their commits get a commit date same as when they are
+merged.&lt;/p&gt;
+&lt;p&gt;In fact, in general, the git log for a large project with many contributors is
+very much &lt;em&gt;not&lt;/em&gt; in chronological order of when the commits were first created.
+Rather, because of the way git log works, the commits it lists will generally
+be in topological order.  It starts by looking at your &lt;tt class="docutils literal"&gt;HEAD&lt;/tt&gt; commit and then
+just walking back through its parents.  This has nothing to do with the actual
+chronological order in which the commits were written by their original
+authors.&lt;/p&gt;
+&lt;p&gt;My first attempt at solving this problem was to use a &lt;tt class="docutils literal"&gt;git log&lt;/tt&gt; command with
+a custom format string returning only the author dates (as well as the hashes
+though they aren't particularly needed):&lt;/p&gt;
+&lt;pre class="literal-block"&gt;
+git log --no-merges --date=short --pretty='format:%ad %H'
+&lt;/pre&gt;
+&lt;p&gt;This displays the author dates fine, but they are still in topological order.
+When trying to use this with &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;--since&lt;/span&gt;&lt;/tt&gt; and &lt;tt class="docutils literal"&gt;&lt;span class="pre"&gt;--until&lt;/span&gt;&lt;/tt&gt; the returned commits
+are still based in the commit dates and not somehow magically sorted and
+grouped by author date.  I realized at this point that there was no way I
+could rely git log to prepare the data in the way I wanted.  It makes much
+more sense at this point to use Pandas.&lt;/p&gt;
+&lt;p&gt;In addition to making the code vastly simpler, it only required one call to
+&lt;tt class="docutils literal"&gt;git log&lt;/tt&gt; and was much faster.  You can use a custom format with &lt;tt class="docutils literal"&gt;git log&lt;/tt&gt;
+to produce any and all data you want from git in a tsv or csv format and
+load it directly into a Pandas DataFrame.  For example, in addition to the
+author date, I also wanted the author, and for the heck of it the hash:&lt;/p&gt;
+&lt;pre class="code python literal-block"&gt;
+&lt;span class="kn"&gt;import&lt;/span&gt; &lt;span class="nn"&gt;io&lt;/span&gt;
+&lt;span class="kn"&gt;from&lt;/span&gt; &lt;span class="nn"&gt;pandas&lt;/span&gt; &lt;span class="kn"&gt;import&lt;/span&gt; &lt;span class="n"&gt;read_csv&lt;/span&gt;
+
+&lt;span class="n"&gt;cmd&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;git log --no-merges --date=short --pretty='format:%ad&lt;/span&gt;&lt;span class="se"&gt;\t&lt;/span&gt;&lt;span class="s2"&gt;%H&lt;/span&gt;&lt;span class="se"&gt;\t&lt;/span&gt;&lt;span class="s2"&gt;%aN'&amp;quot;&lt;/span&gt;
+&lt;span class="n"&gt;p&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;sp&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Popen&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;shlex&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;split&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;cmd&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt; &lt;span class="n"&gt;stdout&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;sp&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;PIPE&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="c1"&gt;# p.wait() will likely just hang if the log is long enough because the&lt;/span&gt;
+&lt;span class="c1"&gt;# stdout buffer will fill up&lt;/span&gt;
+&lt;span class="n"&gt;stdout&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;_&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;p&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;communicate&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+
+&lt;span class="n"&gt;table&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;read_csv&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;io&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;StringIO&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;stdout&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;decode&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s1"&gt;'utf-8'&lt;/span&gt;&lt;span class="p"&gt;)),&lt;/span&gt; &lt;span class="n"&gt;sep&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="s1"&gt;'&lt;/span&gt;&lt;span class="se"&gt;\t&lt;/span&gt;&lt;span class="s1"&gt;'&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+                 &lt;span class="n"&gt;names&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s1"&gt;'date'&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s1"&gt;'hash'&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s1"&gt;'author'&lt;/span&gt;&lt;span class="p"&gt;],&lt;/span&gt; &lt;span class="n"&gt;index_col&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+                 &lt;span class="n"&gt;parse_dates&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="bp"&gt;True&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;sort&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+&lt;/pre&gt;
+&lt;p&gt;The &lt;tt class="docutils literal"&gt;index_col=0&lt;/tt&gt; and &lt;tt class="docutils literal"&gt;parse_dates=True&lt;/tt&gt; indicate that the first column
+('date') should be treated as the index for the table, and that its values
+should be parsed as dates.  The &lt;tt class="docutils literal"&gt;.sort()&lt;/tt&gt; call ensures that the returned
+table is sorted in ascending order by date.&lt;/p&gt;
+&lt;p&gt;Now the commits are indexed by their author date, and for many applications
+that would be fine.  But I still wanted to try grouping by weekly periods
+for use in my plot instead.  There are probably many ways to do this, but the
+one I settled on was to convert to a DataFrame indexed by periods instead of
+dates:&lt;/p&gt;
+&lt;pre class="code python literal-block"&gt;
+&lt;span class="n"&gt;table&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;table&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;to_period&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;freq&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="s1"&gt;'W'&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/pre&gt;
+&lt;p&gt;Then it was easy to generate counts of commits in each period using a simple
+combination of &lt;tt class="docutils literal"&gt;groupby&lt;/tt&gt; and &lt;tt class="docutils literal"&gt;aggregate&lt;/tt&gt;:&lt;/p&gt;
+&lt;pre class="code python literal-block"&gt;
+&lt;span class="n"&gt;commits_per_period&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;table&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;hash&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;groupby&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;level&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;aggregate&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;len&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/pre&gt;
+&lt;p&gt;I specically chose to aggregate over the hash column.  I could have just as
+easily used author.  This gives me a table mapping periods to the number of
+commits in each period.  I'm not sure if this next step is necessary, but
+I could convert this to a list of datetimes and associate array of commit
+counts for use with matplotlib:&lt;/p&gt;
+&lt;pre class="code python literal-block"&gt;
+&lt;span class="n"&gt;dates&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;p&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;start_time&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;date&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt; &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;p&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;commits_per_period&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;index&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
+&lt;span class="n"&gt;ncommits&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;commits_per_period&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;values&lt;/span&gt;
+&lt;/pre&gt;
+&lt;p&gt;The result looks like this:&lt;/p&gt;
+&lt;img alt="Second attempt at a commit activity graph" class="align-center" src="https://iguananaut.net/static/images/git-logs-in-pandas/second-attempt.png" /&gt;
+&lt;p&gt;It still has a few sharper spikes and other small differences from the GitHub
+version, but I think is close enough now.  There could be small differences in
+how they're sampling the data, and additional smoothing that I'm not doing.
+It doesn't matter—this is still an accurate representation of the &lt;em&gt;actual&lt;/em&gt;
+activity of developers working on the project.&lt;/p&gt;
+&lt;p&gt;This is of course just scratching the surface.  With git commit histories
+loaded into Pandas there's no end to the interesting analysis that could be
+done.  For example, I later went on to add a plot of the number of committers
+to the project over time.  That's still pretty basic though, and as I am not
+a statistician I can only imagine the data one could pull out of a git repo in
+this way.&lt;/p&gt;
+&lt;p&gt;The full code, along with the plotting code is here:
+&lt;a class="reference external" href="https://gist.github.com/iguananaut/8248063"&gt;https://gist.github.com/iguananaut/8248063&lt;/a&gt; with thanks to
+&lt;a class="reference external" href="https://github.com/olgabot"&gt;Olga Botvinnik&lt;/a&gt; for providing prettier plots
+with &lt;a class="reference external" href="http://olgabot.github.io/prettyplotlib/"&gt;prettyplotlib&lt;/a&gt;.&lt;/p&gt;
+</summary><category term="git"></category><category term="pandas"></category><category term="python"></category></entry><entry><title>The End of All You'll Know</title><link href="https://iguananaut.net/blog/media/the-end-of-all-youll-know.html" rel="alternate"></link><published>2013-12-13T00:00:00+01:00</published><author><name>Erik M. Bray</name></author><id>tag:iguananaut.net,2013-12-13:blog/media/the-end-of-all-youll-know.html</id><summary type="html">&lt;p&gt;This morning I'd like to share a relatively unknown song that is pretty much
+one of my favorite songs ever.  I just had it in mind since it played in the
+car on the way to work.  It's called &amp;quot;The End of All You'll Know&amp;quot; and is from
+the third Ghost in the Shell: Stand Alone Complex soundtrack:&lt;/p&gt;
+&lt;iframe width="420" height="315" src="//www.youtube.com/embed/T1rsERVlhyQ" frameborder="0" allowfullscreen&gt;&lt;/iframe&gt;&lt;p&gt;This would also be a good time to mention a Korean film we watched a few weeks
+ago that is available on Netflix Instant called &lt;a class="reference external" href="http://en.wikipedia.org/wiki/Doomsday_Book_%28film%29"&gt;Doomsday Book&lt;/a&gt; (not related
+to the novel of the same title).  It's a sort of anthology of three shorts
+about different &amp;quot;Doomsday&amp;quot; scenarios.&lt;/p&gt;
+&lt;p&gt;The first and the third stories I would classify as &amp;quot;cute&amp;quot; and &amp;quot;funny&amp;quot;—
+definitely worth watching though.  First is a uniquely Korean zombie
+apocalypse story called &amp;quot;A Brave New World&amp;quot;, full of over the top gross-out
+humor.  The third is a truly bizarre alien apocalypse story called &amp;quot;Happy
+Birthday&amp;quot; which I also feel could only have come from Korea.&lt;/p&gt;
+&lt;p&gt;The second story, however, I found deeply moving in a legitimate &amp;quot;maeks u
+think&amp;quot; way.  Called, &amp;quot;The Heavenly Creature&amp;quot; it is about a robot that is sent
+to do menial labor at a Buddhist monastery.  A supposed &amp;quot;technical glitch&amp;quot;
+causes the robot to become &amp;quot;self-aware&amp;quot; and believe itself to be enlightened.
+The lyrics to &amp;quot;The End of All You'll Know&amp;quot; can't not make me think of this
+story.  I don't want to give too much of it away by rambling about it all
+morning, but please, please go watch it.&lt;/p&gt;
+&lt;p&gt;P.S. If you search around a bit you can also find the whole movie on YouTube
+but I won't link directly.&lt;/p&gt;
+</summary><category term="tv"></category><category term="movies"></category><category term="music"></category></entry><entry><title>Adding Labels to GitHub Pull Requests</title><link href="https://iguananaut.net/blog/programming/github-labels-on-pull-requests.html" rel="alternate"></link><published>2013-11-29T00:00:00+01:00</published><author><name>Erik M. Bray</name></author><id>tag:iguananaut.net,2013-11-29:blog/programming/github-labels-on-pull-requests.html</id><summary type="html">&lt;p&gt;One thing that I'm often down on GitHub about is its inferior issue tracking system.
+I think that for many, if not the majority of smaller open source projects, that have minimal
+product management, it's sufficient.  But for larger projects that I work on, namely &lt;a class="reference external" href="http://www.astropy.org/"&gt;Astropy&lt;/a&gt;, its
+limitations really become apparent.&lt;/p&gt;
+&lt;p&gt;In particular, what I miss from better issue trackers like Trac's or Bitbucket's is a greater wealth
+of metadata that can be attached to an issue (let's not even get into workflows).  GitHub supports
+a (single) assignee to an issue, a milestone, and any number of &amp;quot;labels&amp;quot;.  Labels are fairly freeform
+and can act as a stand-in for other metadata (affected versions, affected components, etc.) with
+judicious use, and this is exacly what I &lt;em&gt;really&lt;/em&gt; need for Astropy.  There may not be a specific
+&amp;quot;Affected Version&amp;quot; metadata field, but I can at least create labels like &amp;quot;affects-0.2.x&amp;quot;, meaning that
+a particular bug affects the lastest 0.2.x release and should be included in the next bugfix release.
+It's not pretty but at least it works.&lt;/p&gt;
+&lt;p&gt;But where labels &lt;em&gt;really&lt;/em&gt; fall over in GitHub is that they aren't shown on &lt;em&gt;pull requests&lt;/em&gt;.  At least
+not in the most obvious context—on the page for the pull request (PR) itself.  To clarify, GitHub's data
+model treats PRs more or less like a &amp;quot;subclass&amp;quot; of normal issues.  Every PR has an issue (with the same
+number) associated with it, along with some pull request-specific data such as what comparison to make the
+PR from, and its merge status.  So there's no reason PRs &lt;em&gt;can't&lt;/em&gt; have labels—just add labels to the issue
+associated with a PR.  In fact, it's entirely possible to do this through GitHub's API, and I believe some
+command-line utilities such &lt;a class="reference external" href="http://hub.github.com/"&gt;Hub&lt;/a&gt; might support this (though I haven't actually checked).  &lt;em&gt;In fact&lt;/em&gt; you
+can even turn a normal issue into a pull request by attaching the right metadata to it—I use
+&lt;a class="reference external" href="https://gist.github.com/eteq/1750715"&gt;this script&lt;/a&gt; that &lt;a class="reference external" href="https://github.com/eteq"&gt;Erik Tollerud&lt;/a&gt; hacked together to do this all
+the time.&lt;/p&gt;
+&lt;p&gt;This use case—converting an issue to a PR—especially illustrates the problem.  Say you have an issue with
+a bunch of labels attached to it, but then you use this script to attach some code to the issue.  Refresh
+the page and suddenly: No more labels.  Nothing to distinguish the PR except for what milestone it's assigned
+to.&lt;/p&gt;
+&lt;p&gt;That doesn't mean the labels ever went away.  In fact, you &lt;em&gt;can&lt;/em&gt; still view them on the full list of issues
+for the repository—the issue listing UI supports labels for normal issues and PRs alike.  It even supports
+a batch editing mode which allows adding and removing issues from PRs.  So it's not like they never intended
+it to be possible.  They for some reason just haven't gotten around to adding it to the UI for individual
+issues.&lt;/p&gt;
+&lt;p&gt;So anyways, TL;DR: I wrote &lt;a class="reference external" href="http://userscripts.org/scripts/show/185095"&gt;this Greasemonkey script&lt;/a&gt; to
+display and enable management of labels on pull requests.&lt;/p&gt;
+&lt;p&gt;The most obvious place for this would be in the same place they appear on normal issues—the right sidebar
+next to the PR description, under the merge status:&lt;/p&gt;
+&lt;img alt="GitHub pull request without labels" class="align-center" src="https://raw.github.com/iguananaut/userscripts/master/github/labels_on_pull_requests/images/screenshot4.png" /&gt;
+&lt;p&gt;It was very simple to add the appropriate HTML right in this spot.  The end result looks something like
+this:&lt;/p&gt;
+&lt;img alt="Pull request with labels" class="align-center" src="https://raw.github.com/iguananaut/userscripts/master/github/labels_on_pull_requests/images/screenshot3.png" /&gt;
+&lt;p&gt;And it was no trouble to get the label selection menu working (it's just an HTML 5 form):&lt;/p&gt;
+&lt;img alt="Adding a label to a pull request" class="align-center" src="https://raw.github.com/iguananaut/userscripts/master/github/labels_on_pull_requests/images/screenshot2.png" /&gt;
+&lt;p&gt;This was a fun little issue to work on, as my current work rarely affords me to do web frontend development
+(which used to occupy a good half my time).  So my JavaScript is a little rusty and probably garbage.
+The HTML for GitHub's label selection form is a bit hefty, and I started out just building up the same structure
+with DOM methods.  But that got very cumbersome very fast, so I decided to try out one of the JavaScript-based
+HTML template systems.  These had only just started to become useful around the time I stopped doing web
+work, so I've never had the opportunity before.&lt;/p&gt;
+&lt;p&gt;I chose &lt;a class="reference external" href="http://handlebarsjs.com/"&gt;Handlebars&lt;/a&gt; for this purpose, mainly just because I had heard of it, so it was the first thing that
+popped into mind when I thought &amp;quot;maybe I should use a template system&amp;quot;.  I read the docs for it and found it
+satisfying, so I went with it.&lt;/p&gt;
+&lt;p&gt;This, however, motivated my introduction to the relatively new world of &lt;a class="reference external" href="http://en.wikipedia.org/wiki/Content_Security_Policy"&gt;Content Security Protection&lt;/a&gt; (CSP).
+It turns out that Handlebars' template parsing requires being able to perform an &lt;tt class="docutils literal"&gt;eval()&lt;/tt&gt;, which CSP disallows
+by default (GitHub would have to explicitly allow it in their CSP rules, and it's for the best that they
+don't).  That said, part of the point of Greasemonkey and userscripts in general is that as a user I have
+(supposedly) vetted the functionality of this script and have okay'd it to run on my system—in principle
+CSP should only protect me from malicious scripts of which I did not authorize the execution.  But current
+versions of Firefox, at least, remain overly aggressive in enforcing a site's CSP rules even for userscripts
+executed on pages from that site.&lt;/p&gt;
+&lt;p&gt;Digging a little deeper, however, I found that Handlebars supports
+pre-compilation of templates into executable code that does not require runtime
+evals or anything of that nature.  It was easy enough, following the
+instructions, to install Handlebars with node.js and run their script to
+compile my template.  Then I just added the template to the GitHub repo for my
+script and listed it as a prerequisite, after Handlebars itself.  That cleared
+the whole thing up.&lt;/p&gt;
+&lt;p&gt;The only other challenge was colors:  GitHub is using some algorithm server-side to determine good font colors
+to use in contrast with each label's color.  It would be very difficult to determine &lt;em&gt;exactly&lt;/em&gt; what they're
+doing, but with a bit of experimentation I was able to get it &amp;quot;close enough&amp;quot;.&lt;/p&gt;
+&lt;p&gt;So far I've tested this only one Firefox 23 and Chrome 28 (with Tampermonkey) which happen to be the browsers
+installed on my laptop at the moment.  So please let me know if it's successful (or unsuccessful) on other
+browsers.&lt;/p&gt;
+</summary><category term="github"></category><category term="projects"></category><category term="userscripts"></category></entry></feed>

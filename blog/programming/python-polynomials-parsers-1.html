@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+            <meta charset="utf-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+
+
+        <title>On Python, Polynomials, and Parsers (part 1)</title>
+
+        <!-- Bootstrap Core CSS -->
+        <link href="https://iguananaut.net/theme/css/bootstrap.min.css" rel="stylesheet">
+
+        <!-- Custom CSS -->
+        <link href="https://iguananaut.net/theme/css/clean-blog.min.css" rel="stylesheet">
+
+        <!-- Code highlight color scheme -->
+            <link href="https://iguananaut.net/theme/css/code_blocks/darkly.css" rel="stylesheet">
+
+            <!-- CSS specified by the user -->
+            <link href="https://iguananaut.net/static/css/iguananaut.css" rel="stylesheet">
+
+        <!-- Custom Fonts -->
+        <link href="https://maxcdn.bootstrapcdn.com/font-awesome/4.5.0/css/font-awesome.min.css" rel="stylesheet" type="text/css">
+        <link href='https://fonts.googleapis.com/css?family=Lora:400,700,400italic,700italic' rel='stylesheet' type='text/css'>
+        <link href='https://fonts.googleapis.com/css?family=Open+Sans:300italic,400italic,600italic,700italic,800italic,400,300,600,700,800' rel='stylesheet' type='text/css'>
+
+        <!-- HTML5 Shim and Respond.js IE8 support of HTML5 elements and media queries -->
+        <!-- WARNING: Respond.js doesn't work if you view the page via file:// -->
+        <!--[if lt IE 9]>
+            <script src="https://oss.maxcdn.com/libs/html5shiv/3.7.0/html5shiv.js"></script>
+            <script src="https://oss.maxcdn.com/libs/respond.js/1.4.2/respond.min.js"></script>
+        <![endif]-->
+
+
+
+        <meta name="description" content="Note Most of this series doesn't really have anything to do with parsers per se, and more do with analysis of abstract syntax trees ...">
+
+        <meta name="author" content="Erik M. Bray">
+
+        <meta name="tags" content="python">
+        <meta name="tags" content="sage">
+        <meta name="tags" content="debugging">
+
+	                <meta property="og:locale" content="">
+		<meta property="og:site_name" content="from iguananaut import braindump">
+
+	<meta property="og:type" content="article">
+            <meta property="article:author" content="https://iguananaut.net/author/erik-m-bray.html">
+	<meta property="og:url" content="https://iguananaut.net/blog/programming/python-polynomials-parsers-1.html">
+	<meta property="og:title" content="On Python, Polynomials, and Parsers (part 1)">
+	<meta property="article:published_time" content="2016-09-02 00:00:00+02:00">
+            <meta property="og:description" content="Note Most of this series doesn't really have anything to do with parsers per se, and more do with analysis of abstract syntax trees ...">
+
+            <meta property="og:image" content="https://iguananaut.net/theme/images/post-bg.jpg">
+        <meta name="twitter:card" content="summary_large_image">
+        <meta name="twitter:site" content="@iguananaut">
+        <meta name="twitter:title" content="On Python, Polynomials, and Parsers (part 1)">
+
+            <meta name="twitter:image" content="https://iguananaut.net/theme/images/post-bg.jpg">
+
+            <meta name="twitter:description" content="Note Most of this series doesn't really have anything to do with parsers per se, and more do with analysis of abstract syntax trees ...">
+</head>
+
+<body>
+
+    <!-- Navigation -->
+    <nav class="navbar navbar-default navbar-custom navbar-fixed-top">
+        <div class="container-fluid">
+            <!-- Brand and toggle get grouped for better mobile display -->
+            <div class="navbar-header page-scroll">
+                <button type="button" class="navbar-toggle" data-toggle="collapse" data-target="#bs-example-navbar-collapse-1">
+                    <span class="sr-only">Toggle navigation</span>
+                    <span class="icon-bar"></span>
+                    <span class="icon-bar"></span>
+                    <span class="icon-bar"></span>
+                </button>
+                <a class="navbar-brand" href="https://iguananaut.net/">from iguananaut import braindump</a>
+            </div>
+
+            <!-- Collect the nav links, forms, and other content for toggling -->
+            <div class="collapse navbar-collapse" id="bs-example-navbar-collapse-1">
+                <ul class="nav navbar-nav navbar-right">
+
+                            <li><a href="https://iguananaut.net/pages/about.html">About Me</a></li>
+                </ul>
+            </div>
+            <!-- /.navbar-collapse -->
+        </div>
+        <!-- /.container -->
+    </nav>
+
+    <!-- Page Header -->
+        <header class="intro-header" style="background-image: url('https://iguananaut.net/theme/images/post-bg.jpg')">
+        <div class="container">
+            <div class="row">
+                <div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1">
+                    <div class="post-heading">
+                        <h1>On Python, Polynomials, and Parsers (part 1)</h1>
+                        <span class="meta">Posted by
+                                <a href="https://iguananaut.net/author/erik-m-bray.html">Erik M. Bray</a>
+                             on Fri 02 September 2016
+                        </span>
+                        
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1">
+    <!-- Post Content -->
+    <article>
+        <div class="note">
+<p class="first admonition-title">Note</p>
+<p class="last">Most of this series doesn't really have anything to do with parsers per se,
+and more do with analysis of abstract syntax trees (ASTs) which are the output
+of a parser.  I just couldn't resist the alliteration.</p>
+</div>
+<div class="section" id="the-initial-problem">
+<h2>The initial problem</h2>
+<p>One of my current major tasks to is port the <a class="reference external" href="http://www.sagemath.org/">SageMath</a> mathematical software toolkit to work on Windows.
+This turns out to be a surprisingly challenging task—SageMath has a large
+number of dependencies, some of which make platform-specific assumptions and
+don't support Windows. Currently I am dependent on Cygwin for this—I hope to
+break away from Cygwin dependence eventually, but that's beside the point.</p>
+<p>While running Sage's massive test suite of tens of thousands of tests, I
+encountered one test—which involves computing someting I don't understand about
+isogenies of <a class="reference external" href="https://en.wikipedia.org/wiki/Elliptic_curve">elliptic curves</a>
+—which was resulting in a segmentation fault (only on Windows). I am not a
+mathematician, and do not understand the majority of the math in SageMath (and
+neither do the mathematicians who work on it—it's too huge for any one person
+to understand all of). In particular, while I've used Sage solve some basic
+analytical problems, most of its complex hierarchies of algebraic objects and
+operations thereon are beyond me. I know what an elliptic curve is but I don't
+know much about what you do with them. So a segfault deep in some calculation
+about a property of an elliptic curve was a bit intimidating.</p>
+</div>
+<div class="section" id="debugging">
+<h2>Debugging</h2>
+<p>The good news was being a platform-specific segfault there was a chance the
+problem had nothing to do with details of the calculation itself, and that
+suspicion bore out. As usual when there's a bug in Python, I started by
+stepping through the failing test with <a class="reference external" href="https://docs.python.org/3/library/pdb.html">pdb</a>. This led me into a function
+called <a class="reference external" href="https://git.sagemath.org/sage.git/tree/src/sage/schemes/elliptic_curves/isogeny_small_degree.py?id=00722fdd62ec1eea787ae97eec986888cd2d9601#n1446">Psi2</a>,
+which was being called with an input of 71. It tured out to be the last line of
+this function that was causing the segfault. SO I was able to isolate the
+problem to this function:</p>
+<div class="highlight"><pre><span></span><span class="o">&gt;&gt;&gt;</span> <span class="kn">from</span> <span class="nn">sage.schemes.elliptic_curves.isogeny_small_degree</span> <span class="kn">import</span> <span class="n">Psi2</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">Psi2</span><span class="p">(</span><span class="mi">71</span><span class="p">)</span>
+<span class="n">Segmentation</span> <span class="n">fault</span> <span class="p">(</span><span class="n">core</span> <span class="n">dumped</span><span class="p">)</span>
+</pre></div>
+<p>Because large swaths of Sage are written in <a class="reference external" href="http://cython.org/">Cython</a>, the
+Python debugger is not particularly useful beyond this point. And in any case
+because we're getting a segmentation fault, the problem has to be below the
+Python level anyways. I was mostly expecting the problem to be in one of Sage's
+many dependencies, such as the <a class="reference external" href="https://www.singular.uni-kl.de/">Singular</a>
+system, which is used for many computations about polynomials. So the next step
+is to put the failing code in a short script, and run Python through gdb, which
+can catch the segmentation fault and provide a C-level traceback:</p>
+<pre class="literal-block">
+(gdb) run Psi2.py
+... various noise, like new threads spawning (Cygwin uses lots of threads to implement things like signal handling) ...
+Program received signal SIGSEGV, Segmentation fault.
+0x00000003f42f32ad in symtable_visit_expr () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+</pre>
+<p>Huh! That was not what I was expecting—a segfault somewhere in the bowels of
+the Python interpreter itself. Not that it's the first time I've ever found a
+segfault in the Python interpreter, but not what I was expecting for this code.
+I wasn't using a debug build of Python, so I don't get much in the way of
+debugging info other than the function name. But let's look at the rest of the
+backtrace to see if we can tell something more:</p>
+<pre class="literal-block">
+(gdb) bt
+#0  0x00000003f42f32ad in symtable_visit_expr () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#1  0x00000003f42f32b2 in symtable_visit_expr () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#2  0x00000003f42f32b2 in symtable_visit_expr () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#3  0x00000003f42f32b2 in symtable_visit_expr () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#4  0x00000003f42f32b2 in symtable_visit_expr () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#5  0x00000003f42f32b2 in symtable_visit_expr () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#6  0x00000003f42f32b2 in symtable_visit_expr () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#7  0x00000003f42f32b2 in symtable_visit_expr () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#8  0x00000003f42f32b2 in symtable_visit_expr () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#9  0x00000003f42f32b2 in symtable_visit_expr () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#10 0x00000003f42f32b2 in symtable_visit_expr () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+...
+</pre>
+<p>... and so on for another 40 lines. Yikes! Looks like a recursion bug. In fact:</p>
+<pre class="literal-block">
+(gdb) bt -10
+#7174 0x00000003f42bbec8 in call_function () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#7175 0x00000003f42b66c7 in PyEval_EvalFrameEx () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#7176 0x00000003f42b9158 in PyEval_EvalCodeEx () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#7177 0x00000003f42aee74 in PyEval_EvalCode () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#7178 0x00000003f42ebf6a in run_mod () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#7179 0x00000003f42ebeee in PyRun_FileExFlags () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#7180 0x00000003f42ea5bd in PyRun_SimpleFileExFlags () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#7181 0x00000003f42e9bcb in PyRun_AnyFileExFlags () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#7182 0x00000003f43062bc in Py_Main () from /home/embray/src/sagemath/sage-cygwin/local/bin/libpython2.7.dll
+#7183 0x0000000100401103 in main (argc=2, argv=0xffffcc00) at ./Modules/python.c:23
+</pre>
+<p>A good 7000+ stack frames worth of recursion. The reason for the segfault is
+clear then —a good ol' stack overflow!</p>
+<p>This also explains why this test failed on Windows, but not other platforms
+(most Sage developers are using some *nix variant). Programs run with a default
+limit on their stack size, usually provided by the operating system. On most
+Linux systems, for example, this is 8 MB. On Windows the the OS is still
+responsible for reserving the stack, but executables can actually have their
+requested stack size compiled into them at link time. By default (at least in
+Cygwin's GCC) this is just 1 MB. So clearly this could fail just as well on
+Linux with a smaller stack—and indeed when I tried setting:</p>
+<pre class="literal-block">
+$ ulimit -s 1024
+</pre>
+<p>to set my stack limit to 1 MB, I got the same crash on Linux.</p>
+<p>In the next post I'll explain in a little more detail what the problematic code
+in Sage is doing, and why it's crashing Python somewhere in its symbol table
+analysis. Then I'll write a post exploring this particular corner of the
+CPython interpeter. While I've spent a good amount of time in CPython's code,
+the compiler is one area where I had previously spent very little time, so it
+was an interesting learning experience.</p>
+</div>
+
+    </article>
+
+        <div class="tags">
+            <p>tags: <a href="https://iguananaut.net/tag/python.html">python</a>, <a href="https://iguananaut.net/tag/sage.html">sage</a>, <a href="https://iguananaut.net/tag/debugging.html">debugging</a></p>
+        </div>
+
+<hr>
+<div class="sharing">
+</div>
+    <hr>
+
+        <div class="comments">
+            <h2>Comments !</h2>
+            <div id="disqus_thread"></div>
+            <script type="text/javascript">
+                var disqus_shortname = 'iguananaut';
+                var disqus_identifier = 'blog/programming/python-polynomials-parsers-1.html';
+                var disqus_url = 'https://iguananaut.net/blog/programming/python-polynomials-parsers-1.html';
+                (function() {
+                    var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+                    dsq.src = '//iguananaut.disqus.com/embed.js';
+                    (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+                })();
+            </script>
+            <noscript>Please enable JavaScript to view the comments.</noscript>
+        </div>
+            </div>
+        </div>
+    </div>
+
+    <hr>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="row">
+                <div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1">
+                    <ul class="list-inline text-center">
+                            <li>
+                                <a href="https://twitter.com/iguananaut">
+                                    <span class="fa-stack fa-lg">
+                                        <i class="fa fa-circle fa-stack-2x"></i>
+                                        <i class="fa fa-twitter fa-stack-1x fa-inverse"></i>
+                                    </span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="http://www.linkedin.com/pub/erik-bray/19/2a8/a22">
+                                    <span class="fa-stack fa-lg">
+                                        <i class="fa fa-circle fa-stack-2x"></i>
+                                        <i class="fa fa-linkedin fa-stack-1x fa-inverse"></i>
+                                    </span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="http://stackoverflow.com/users/982257/iguananaut">
+                                    <span class="fa-stack fa-lg">
+                                        <i class="fa fa-circle fa-stack-2x"></i>
+                                        <i class="fa fa-stack-overflow fa-stack-1x fa-inverse"></i>
+                                    </span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="https://github.com/embray">
+                                    <span class="fa-stack fa-lg">
+                                        <i class="fa fa-circle fa-stack-2x"></i>
+                                        <i class="fa fa-github fa-stack-1x fa-inverse"></i>
+                                    </span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="https://bitbucket.com/embray">
+                                    <span class="fa-stack fa-lg">
+                                        <i class="fa fa-circle fa-stack-2x"></i>
+                                        <i class="fa fa-bitbucket fa-stack-1x fa-inverse"></i>
+                                    </span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="mailto:erik.m.bray@gmail.com">
+                                    <span class="fa-stack fa-lg">
+                                        <i class="fa fa-circle fa-stack-2x"></i>
+                                        <i class="fa fa-envelope fa-stack-1x fa-inverse"></i>
+                                    </span>
+                                </a>
+                            </li>
+                    </ul>
+<p style="font-size: small"><span xmlns:dct="http://purl.org/dc/terms/" property="dct:title" class="site-name">
+  iguananaut.net
+</span> by
+<a xmlns:cc="http://creativecommons.org/ns#" href="https://iguananaut.net" property="cc:attributionName" rel="cc:attributionURL">
+  Erik M. Bray
+</a> is licensed under a
+<a rel="license" href="http://creativecommons.org/licenses/by-sa/3.0/deed.en_US">
+  Creative Commons Attribution-ShareAlike 3.0 Unported License
+</a></p>                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- jQuery -->
+    <script src="https://iguananaut.net/theme/js/jquery.js"></script>
+
+    <!-- Bootstrap Core JavaScript -->
+    <script src="https://iguananaut.net/theme/js/bootstrap.min.js"></script>
+
+
+    <script type="text/javascript">
+    var _gaq = _gaq || [];
+    _gaq.push(['_setAccount', 'UA-46117138-1']);
+    _gaq.push(['_trackPageview']);
+    (function() {
+        var ga = document.createElement('script'); ga.type = 'text/javascript'; ga.async = true;
+        ga.src = ('https:' == document.location.protocol ? 'https://ssl' : 'http://www') + '.google-analytics.com/ga.js';
+        var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(ga, s);
+    })();
+    </script>
+<script type="text/javascript">
+    var disqus_shortname = 'iguananaut';
+    (function () {
+        var s = document.createElement('script'); s.async = true;
+        s.type = 'text/javascript';
+        s.src = '//' + disqus_shortname + '.disqus.com/count.js';
+        (document.getElementsByTagName('HEAD')[0] || document.getElementsByTagName('BODY')[0]).appendChild(s);
+    }());
+</script>
+</body>
+
+</html>
